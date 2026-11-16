@@ -2,6 +2,9 @@
 
 Date: 2026-11-16. Requested directly by owner; no implementation issue selected.
 
+Follow-up: owner cancelled fork detachment and requested independent public
+repository instead. See standalone migration below; no Support action remains.
+
 ## Authorization and scope
 
 Owner requests R36S identity, public repository independence with issue history
@@ -82,7 +85,7 @@ Runtime SHA-256:
 Archive has 15 allowlisted entries, executable permissions and valid ZIP CRCs.
 Raw logs stay local, not public ZIP. Existing device evidence remains untouched.
 
-## Publication receipt
+## Initial publication receipt
 
 Published [R36S 30 FPS preview v0.1.0-r36s-30fps](https://github.com/ktodorow/sh3-r36/releases/tag/v0.1.0-r36s-30fps).
 This is repository's only release; no earlier releases existed at publication.
@@ -101,34 +104,42 @@ Main fast-forwarded without rewriting any history. All 19 issue numbers, states
 and URLs match pre-publication snapshot; 10 implementation issues remain open.
 No unrelated issues closed or task comments posted.
 
-## Fork detachment handoff
+## Standalone repository migration — 2026-11-16
 
-Owner chose GitHub Support, keeping same repository/name and existing 19 issues
-and comments. Official guide warns direct **Leave fork network** loses issue/PR
-and other metadata. Do not use destructive direct detach or delete/recreate.
+Owner requested new public [ktodorow/sh3-r36s](https://github.com/ktodorow/sh3-r36s)
+instead of detachment. GitHub confirms `fork: false`, public visibility and
+`dev` default. Original `ktodorow/sh3-r36` remains a fork. All original commits,
+three branches (`dev`, `main`, `research`) and annotated preview tag copied;
+history and authorship preserved without rewriting. Later commits shorten
+player docs and update current tracker pointers.
 
-GitHub Support cannot be submitted from this session: no browser available;
-explicit in-app browser creation also returned "Browser is not available: iab".
-Repository remains public fork until GitHub Support completes detachment.
-New commits retain owner's attribution, but fork status still needs changing
-before independent-repository contribution counting can apply.
+All 19 issues transferred natively, preserving numbers, authors, creation/closure
+dates, 11 comments, labels, assignees and states: nine closed, ten open.
+Original issue URLs redirect. All 26 original dependency links verified; two
+links dropped during transfer were restored from pre-migration snapshot.
+GitHub assigns new issue IDs and expands some issue-reference labels during
+transfer; these expected changes do not replace original authors or comments.
+Migration snapshots and verification stay local under
+`.port-cache/repo-copy-20261116/`.
 
-Submit at [GitHub Support](https://support.github.com/contact):
+[Same preview tag and prerelease](https://github.com/ktodorow/sh3-r36s/releases/tag/v0.1.0-r36s-30fps)
+published with ZIP and checksum assets. Archive updates only `sh3/README.md` and
+`sh3/CREDITS.md`; all 13 other entries, runtime bytes and permissions unchanged.
+Compiled source commit remains `dc18e2921b5584b69726155b2b73ed3046977167`.
+Updated ZIP SHA-256:
+`4221603b5a0be46a1a4eb03aea84d7a656db4c9c456fbc2705def83a775b18a9`.
 
-> Subject: Detach ktodorow/sh3-r36 while preserving issue history
->
-> I own https://github.com/ktodorow/sh3-r36, currently a public fork of
-> https://github.com/cutarev/sh3-nx. Please detach it from the fork network and
-> keep it as an independent public repository with the same owner/name and URL.
-> Please preserve all 19 issues and their comments, Git history and authorship,
-> branches, tags, releases, stars and repository settings. I chose Support rather
-> than Leave fork network because retaining issue history matters. Upstream
-> authors remain credited in README and commit history. Please advise before
-> taking any action that would lose existing metadata.
+README and release notes now keep full PortMaster installation as only listed
+requirement, short SD/FTP install with owner's wiki link, brief upstream and
+PortMaster credits, simple Konami non-affiliation notice and own-executable
+Docker build guidance. Original input hash identifies published build; supported
+input recognition remains unchanged. Documentation/package-only follow-up:
+content, archive and migration checks apply; runtime behavior unchanged.
 
 ## Sources and applicability
 
 - [GitHub detaching a fork](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/detaching-a-fork): Support route preserves requested identity/history; direct route warning reviewed 2026-11-16.
+- [GitHub issue transfer](https://docs.github.com/en/issues/tracking-your-work-with-issues/administering-issues/transferring-an-issue-to-another-repository): native transfer retains comments and assignees; original issue URLs redirect. Matching labels prepared before transfer.
 - [PortMaster packaging](https://portmaster.games/contribute/porting/packaging/): player folder/launcher/licensing patterns; this is manual preview ZIP, not catalogue submission.
 - [PortMaster installation](https://portmaster.games/installation.html): installed firmware helpers required separately.
 - [PortMaster help](https://portmaster.games/faq.html): game-data placement and active Ports-folder guidance; actual tested two-card path `/roms2/ports/` from project evidence.

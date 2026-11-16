@@ -4,7 +4,7 @@ Read before fetching work, preparing tracker changes, or publishing task results
 
 ## Read task context
 
-1. Use `gh` against `ktodorow/sh3-r36`. Read selected issue body, every comment, linked blocking issues, and their evidence.
+1. Use `gh` against `ktodorow/sh3-r36s`. Read selected issue body, every comment, linked blocking issues, and their evidence.
 2. Read linked canonical spec in `docs/specs/`, its research, glossary, and relevant ADRs in full. Treat issue history as task history; spec defines current feature acceptance.
 3. Verify prerequisite capabilities from actual evidence. A report describing a blocker, another game's result, or a fixture pass is not an R36S capability pass.
 

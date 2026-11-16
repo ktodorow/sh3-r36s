@@ -112,7 +112,7 @@ Security warnings and destructive action confirmations: use full clarity.
 
 ### Issue tracker
 
-Specs live in `docs/specs/`; tasks and comments use GitHub Issues in `ktodorow/sh3-nx-r36s` through `gh`. Before publishing or fetching work, read `docs/agents/issue-tracker.md`.
+Specs live in `docs/specs/`; tasks and comments use GitHub Issues in `ktodorow/sh3-r36s` through `gh`. Before publishing or fetching work, read `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
