@@ -12,8 +12,8 @@ Docker Desktop emulation). All C compilation runs inside Docker. No console
 SDK/toolchain is needed.
 
 ```sh
-git clone --branch dev https://github.com/ktodorow/sh3-r36.git
-cd sh3-r36
+git clone --branch dev https://github.com/ktodorow/sh3-r36s.git
+cd sh3-r36s
 cp .env.example .env
 ```
 
