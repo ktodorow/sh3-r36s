@@ -82,6 +82,25 @@ Runtime SHA-256:
 Archive has 15 allowlisted entries, executable permissions and valid ZIP CRCs.
 Raw logs stay local, not public ZIP. Existing device evidence remains untouched.
 
+## Publication receipt
+
+Published [R36S 30 FPS preview v0.1.0-r36s-30fps](https://github.com/ktodorow/sh3-r36/releases/tag/v0.1.0-r36s-30fps).
+This is repository's only release; no earlier releases existed at publication.
+Assets are `sh3-r36s-30fps.zip` (9,187,588 bytes) and `SHA256SUMS`.
+Downloaded published assets and verified SHA-256, archive CRCs, manifest and
+checksum file against final local build.
+
+Tag, `dev` and `main` point to
+[`dc18e2921b5584b69726155b2b73ed3046977167`](https://github.com/ktodorow/sh3-r36/commit/dc18e2921b5584b69726155b2b73ed3046977167).
+ZIP SHA-256:
+`8a51b7bc823aec3578f966ee05536f822c8d22387809a2b32083b73e8288fd69`.
+GitHub confirms new commit author and committer as `ktodorow`.
+Default branch is `dev`; repository remains public. `research` retains full
+project material and test dependencies; `dev` pins only native build dependency.
+Main fast-forwarded without rewriting any history. All 19 issue numbers, states
+and URLs match pre-publication snapshot; 10 implementation issues remain open.
+No unrelated issues closed or task comments posted.
+
 ## Fork detachment handoff
 
 Owner chose GitHub Support, keeping same repository/name and existing 19 issues
@@ -91,6 +110,8 @@ and other metadata. Do not use destructive direct detach or delete/recreate.
 GitHub Support cannot be submitted from this session: no browser available;
 explicit in-app browser creation also returned "Browser is not available: iab".
 Repository remains public fork until GitHub Support completes detachment.
+New commits retain owner's attribution, but fork status still needs changing
+before independent-repository contribution counting can apply.
 
 Submit at [GitHub Support](https://support.github.com/contact):
 
