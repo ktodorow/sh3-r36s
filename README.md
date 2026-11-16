@@ -8,7 +8,7 @@ Native Linux ARM64 port of the PC version of **Silent Hill 3** for R36S, maintai
 
 ## Current release and features
 
-Download [R36S 30 FPS release](https://github.com/ktodorow/sh3-r36/releases/latest). Use the **`sh3-r36s-30fps.zip`** asset, not GitHub’s automatic source-code ZIP.
+Download [R36S 30 FPS release](https://github.com/ktodorow/sh3-r36/releases/tag/v0.1.0-r36s-30fps). Use the **`sh3-r36s-30fps.zip`** asset, not GitHub’s automatic source-code ZIP.
 
 - **30 FPS locked profile:** gameplay capped at 30 FPS, **320×240 internal rendering scaled to 640×480 output**, with original 4:3 presentation. A cap is not a guarantee: demanding scenes, loading and first shader compilation can still cause drops. The 640×480 internal comparison mode remains in source; it is not the release profile.
 - **Native execution:** PC x86 code translated ahead of time to C and compiled for Linux AArch64. SDL2 handles input/audio; Direct3D 8 is translated to hardware OpenGL ES. No emulator or Wine required.
@@ -23,7 +23,7 @@ This is a **preview**, not a completed campaign certification. Original prerecor
 
 - R36S with **64-bit dArkOS**, working PortMaster installation, firmware SDL2 and Mali GLES drivers, Python 3, systemd and passwordless `sudo` for the normal frontend user. This launcher was developed on dArkOS with kernel 4.4.189 and glibc 2.41. Other firmware and R36S clones have not been verified.
 - Approximately 5 GB for your installed PC game data, plus space for port, saves and caches.
-- Release executable profile: `sh3.exe`, **3,338,240 bytes**, SHA-1 **`d851669ef609b3164e3581aa8dcfbfaec866cb79`** (original-CD input used for this R36S build). A different executable must not be renamed or patched to bypass validation. Developers can build from either recognized input profile; see [developer guide](DEVELOPING.md).
+- Release executable profile: `sh3.exe`, **3,338,240 bytes**, SHA-1 **`d851669ef609b3164e3581aa8dcfbfaec866cb79`** (original-CD input used for this R36S build). A different executable must not be renamed or patched to bypass validation. Developers can build from either recognized input profile; see [developer guide](https://github.com/ktodorow/sh3-r36/blob/dev/DEVELOPING.md).
 
 Install/update [PortMaster](https://portmaster.games/installation.html) first. This ZIP uses PortMaster’s installed control/firmware helpers; it does not bundle PortMaster or claim an official catalogue submission.
 
@@ -93,7 +93,7 @@ Remap game actions in **Options → Button Config**. Mapping persists in `sh3/st
 
 ## Development and branches
 
-[Developer guide](DEVELOPING.md) covers native ARM64 Docker builds and packaging.
+[Developer guide](https://github.com/ktodorow/sh3-r36/blob/dev/DEVELOPING.md) covers native ARM64 Docker builds and packaging.
 
 - **[dev](https://github.com/ktodorow/sh3-r36/tree/dev):** source, required build dependencies, Docker recipe, release packaging and runtime helpers.
 - **[research](https://github.com/ktodorow/sh3-r36/tree/research):** same R36S baseline plus project specs, reports, research, tests, device probes and saved host/device workflows. Private game data, credentials and raw device dumps remain local.

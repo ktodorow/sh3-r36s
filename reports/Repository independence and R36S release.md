@@ -58,8 +58,29 @@ Private local evidence: `.port-cache/repo-restructure/20261116T100120Z/`
 (original working snapshot and Linux preprocessor comparison),
 `.port-cache/repo-restructure/host-tests.*.txt` (host regression), and
 `.port-cache/builds/<UTC-id>/` (production build identity and logs).
-Host discovery: 258 tests, 77 passes, 173 skips, 8 failures in Linux-only GPU probe fixtures on macOS (missing timeout utility and /var versus /private/var path aliases). These research-only checks need Linux container validation; no device capability inferred. Syntax checks passed for 13 Python and 20 shell scripts. Final native build/test/release verification recorded in final handoff. Raw logs stay
-local, not public ZIP. Existing device evidence remains untouched.
+Host discovery: 258 tests, 77 passes, 173 skips, 8 failures in Linux-only GPU
+probe fixtures on macOS (missing timeout utility and `/var` versus
+`/private/var` path aliases). Linux ARM64 discovery then passed: 258 tests,
+35 passes, 223 skips, no failures, including all eight affected fixtures.
+Syntax checks passed for 13 Python and 20 shell scripts.
+
+All nine saved build-CLI tests passed with `SH3_REAL_BUILD_TESTS=1`, including
+real ARM64 fixture compilation, archive execution, optimization settings,
+stale-mtime invalidation and failed-cache recovery. Seven production-runtime
+checks passed in ARM64 Docker: five runtime-launcher checks, direct game launch
+with Select+Start exit, and quiet normal/failure behavior. Evidence lives under
+`.port-cache/repo-restructure/build-cli-tests.*.txt`,
+`.port-cache/repo-restructure/linux-fixtures/`, and
+`.port-cache/repo-restructure/release-runtime/`.
+
+Production native build completed from lean `dev` source. All 69 compile
+commands target Cortex-A35; private diagnostic samples disabled. Runtime is
+Linux AArch64, dynamically linked to firmware SDL2, libc and libm; maximum
+required GLIBC symbol version 2.34 is below recorded device glibc 2.41.
+Runtime SHA-256:
+`8ddd69647492f11e9763c89f559bff54c676c6ab2b7cc5bdb0760735ecdca492`.
+Archive has 15 allowlisted entries, executable permissions and valid ZIP CRCs.
+Raw logs stay local, not public ZIP. Existing device evidence remains untouched.
 
 ## Fork detachment handoff
 
