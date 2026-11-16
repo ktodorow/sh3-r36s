@@ -1,6 +1,6 @@
 # Silent Hill 3 — R36S port
 
-Native port of the PC version of **Silent Hill 3** for R36S, maintained by [ktodorow](https://github.com/ktodorow).
+Native port of the PC version of **Silent Hill 3** for R36S.
 
 > **No game files are included. You need your own copy of the PC game;** add your `sh3.exe` and complete `data/` folder after installing the port.
 >

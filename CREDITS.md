@@ -1,7 +1,5 @@
 # Credits and notices
 
-Silent Hill 3 R36S maintained by Kristiyan Todorov ([ktodorow](https://github.com/ktodorow)).
-
 Special thanks to [cutarev](https://github.com/cutarev), original author of
 [sh3-nx](https://github.com/cutarev/sh3-nx) and [sh2-nx](https://github.com/cutarev/sh2-nx).
 The static recompilation pipeline, custom Windows runtime, graphics translation,
