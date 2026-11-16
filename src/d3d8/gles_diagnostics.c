@@ -1,5 +1,4 @@
 /* Installed-launcher diagnostics. Never infer hardware support from host fixtures. */
-#ifndef __SWITCH__
 #include "d3d8.h"
 #include <sys/resource.h>
 #ifdef SH3_GLES_SAMPLES
@@ -1098,4 +1097,3 @@ unavailable:
     SDL_Quit();
     return 9;
 }
-#endif

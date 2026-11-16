@@ -4,11 +4,15 @@
 /SILENT HILL 3/
 src/recomp/gen/
 __pycache__/
-build-switch.log
 dist/
-*.nro
 sh3-progs.bin
 icon.jpg.bak
+.DS_Store
+# Retired console artifacts must never enter source branches.
+*.nro
+*.nso
+*.nsp
+*.xci
 
 # Private configuration; example template stays trackable
 .env

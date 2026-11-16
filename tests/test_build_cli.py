@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -20,6 +21,7 @@ class BuildCliTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for name in ["scripts/host/build.py", "scripts/host/r36s.py", "scripts/device/check-data.sh",
+                     "scripts/build/check-data.sh",
                      "scripts/required-data.txt", "scripts/build/Dockerfile", ".gitignore", "CMakeLists.txt"]:
             dest = self.root / name
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -60,6 +62,73 @@ class BuildCliTests(unittest.TestCase):
         identity = json.loads((runs[0] / "build-inputs.json").read_text())
         self.assertEqual(identity.get("optimization"), "O3",
                          "requested compiler variant lost from reproducible build identity")
+
+    def test_build_needs_no_device_connection_tooling(self):
+        (self.root / "scripts/host/r36s.py").unlink()
+        shutil.rmtree(self.root / "scripts/device")
+        result = subprocess.run(["python3", str(self.root / "scripts/host/build.py")],
+                                cwd=self.root, env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 42, result.stderr + result.stdout)
+        run, = (self.root / ".port-cache/builds").iterdir()
+        self.assertEqual(json.loads((run / "build-inputs.json").read_text())["input_sha1"],
+                         "d851669ef609b3164e3581aa8dcfbfaec866cb79")
+
+    def test_release_build_excludes_private_shader_samples_from_recorded_configuration(self):
+        result = subprocess.run(["python3", str(self.root / "scripts/host/build.py"), "--release"],
+                                cwd=self.root, env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 42, result.stderr + result.stdout)
+        run, = (self.root / ".port-cache/builds").iterdir()
+        identity = json.loads((run / "build-inputs.json").read_text())
+        self.assertIs(identity["diagnostic_shader_samples"], False)
+
+    @unittest.skipUnless(os.environ.get("SH3_REAL_BUILD_TESTS") == "1",
+                         "requires real Linux ARM64 Docker build")
+    def test_release_produces_installable_zip_without_private_inputs(self):
+        source = self.root / "src/runtime/host.c"
+        source.parent.mkdir(parents=True)
+        source.write_text('#include <stdio.h>\nint main(void) { puts("release native fixture"); }\n')
+        (self.root / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.20)\nproject(release_check C)\n'
+            'if(SH3_GLES_SAMPLES)\nmessage(FATAL_ERROR "Private samples enabled")\nendif()\n'
+            'add_executable(sh3 src/runtime/host.c)\n')
+        shutil.copyfile(REPO / "scripts/build/native.sh", self.root / "scripts/build/native.sh")
+        generator = self.root / "tools/regen.sh"
+        generator.parent.mkdir()
+        generator.write_text('mkdir -p src/recomp/gen\nprintf "fixture\\n" > src/recomp/gen/input.txt\n')
+        for name in ["README.md", "CREDITS.md", "third_party/xboxrecomp/LICENSE",
+                     "ports/Silent Hill 3 Play.sh", "ports/Silent Hill 3 Game.sh",
+                     "ports/Silent Hill 3.sh", "ports/game-session.sh",
+                     "ports/restore-frontend.sh", "ports/performance-governors.py"]:
+            dest = self.root / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(REPO / name, dest)
+        result = subprocess.run(["python3", str(self.root / "scripts/host/build.py"), "--release"],
+                                cwd=self.root, env={**self.env, "PATH": os.environ["PATH"]},
+                                capture_output=True, text=True, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        archive = self.root / "dist/release/sh3-r36s-30fps.zip"
+        self.assertTrue(archive.is_file(), "release command must produce ready-to-copy archive")
+        with zipfile.ZipFile(archive) as package:
+            names = package.namelist()
+            self.assertEqual([n for n in names if '/' not in n and n.endswith('.sh')],
+                             ["Silent Hill 3.sh"])
+            self.assertIn("sh3/runtime/sh3", names)
+            self.assertIn("sh3/preflight/scripts/build/check-data.sh", names)
+            self.assertEqual(package.read("sh3/runtime/input.sha1").decode().strip(),
+                             "d851669ef609b3164e3581aa8dcfbfaec866cb79")
+            self.assertFalse(any(n.endswith(('sh3.exe', '.debug', 'data.sys', '.env')) or
+                                 '/reports/' in n or '/scripts/device/' in n for n in names))
+            binary = self.root / "unpacked/sh3"
+            binary.parent.mkdir()
+            binary.write_bytes(package.read("sh3/runtime/sh3"))
+            binary.chmod(0o755)
+        image = "sh3-r36s-build:" + hashlib.sha256(
+            (self.root / "scripts/build/Dockerfile").read_bytes()).hexdigest()[:16]
+        output = subprocess.check_output([
+            "docker", "run", "--rm", "--platform", "linux/arm64", "--network", "none",
+            "--mount", f"type=bind,src={binary.parent},dst=/artifact,readonly",
+            image, "/artifact/sh3"], text=True).strip()
+        self.assertEqual(output, "release native fixture")
 
     @unittest.skipUnless(os.environ.get("SH3_REAL_BUILD_TESTS") == "1",
                          "requires real Linux ARM64 Docker build")

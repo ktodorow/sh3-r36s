@@ -12,6 +12,39 @@ from test_preflight import LauncherFixture, REPO
 
 @unittest.skipUnless(os.environ.get("SH3_GAME_DATA"), "requires read-only owner data in ARM64 Docker")
 class GameLauncherTests(LauncherFixture):
+    def test_fresh_player_options_keep_much_blood_noise_off_and_no_progress(self):
+        """Apply requested settings through original UI; cold reload encoded options."""
+        runtime = self.port / 'runtime/sh3'
+        runtime.parent.mkdir()
+        shutil.copyfile(os.environ['SH3_RUNTIME_BINARY'], runtime)
+        runtime.chmod(0o755)
+        out = Path(os.environ['SH3_GAME_REFERENCE_OUT']).parent / 'player-options'
+        out.mkdir()
+        menu = ('10:Return+0.4,26:Down+0.2,28:Down+0.2,30:Return+0.4,'
+                '33:D+0.2,36:D+0.2,39:D+0.2,42:D+0.2')
+        apply = (',45:S+0.2,47:Right+0.2,49:S+0.2,51:S+0.2,53:S+0.2,'
+                 '55:Left+0.2,57:S+0.2,59:S+0.2,61:S+0.2,64:Return+0.4,67:Return+0.4')
+        for name, seconds, keys in [('configure', 85, menu + apply), ('reload', 48, menu)]:
+            shots = out / name / 'shots'
+            shots.mkdir(parents=True)
+            result = self.launch(timeout=seconds + 20, SH3_MODE='game', SH3_DATA_DIR=os.environ['SH3_GAME_DATA'],
+                                 SH3_RUN_ID=name, SH3_KEYS=keys, SH3_GL_BACKEND='desktop',
+                                 SDL_VIDEODRIVER='offscreen', SDL_AUDIODRIVER='dummy',
+                                 LIBGL_ALWAYS_SOFTWARE='1', SH3_QUIT_AFTER=str(seconds),
+                                 SH3_SHOT=str(shots), SH3_SHOT_EVERY='120', SH3_FPS_LIMIT='30',
+                                 SH3_INTERNAL_RESOLUTION='320x240',
+                                 SH3_PEEK='70E66C8,70E66CC,70E66B0,72BFD0,72BFD4')
+            shutil.copytree(self.port / 'runs' / name, out / name / 'launcher')
+            self.assertEqual(result.returncode, 0, result.stderr[-4000:])
+            self.assertFalse(list((self.port / 'state/savedata').glob('data.[0-9][0-9][0-9]')))
+            if name == 'reload':
+                values = re.findall(r'070E66C8=([0-9A-F]+) 070E66CC=([0-9A-F]+) 070E66B0=([0-9A-F]+)',
+                                    result.stderr)
+                self.assertTrue(values, 'cold settings never loaded')
+                self.assertEqual(tuple(int(v, 16) >> 24 for v in values[-1]), (2, 0, 0),
+                                 'cold options must be Blood Much, Noise Off, Display Normal')
+        shutil.copytree(self.port / 'state/savedata', out / 'settings')
+
     def test_graphics_options_persist_without_saving_game_progress(self):
         """Real Options -> 512x256 -> Exit/Yes -> Select+Start -> cold launch."""
         runtime = self.port / "runtime/sh3"
@@ -129,7 +162,32 @@ sys.exit(child.wait())
     def test_select_start_exits_actual_game_but_either_button_alone_does_not(self):
         self.check_exit_combo(scripted=True)
 
-    def check_exit_combo(self, scripted, input_matrix=False):
+    def test_direct_play_starts_game_without_scripted_input_or_port_launcher(self):
+        self.check_exit_combo(scripted=False, direct=True)
+
+    def test_quiet_runtime_records_no_diagnostics_even_after_fatal_launch_failure(self):
+        runtime = self.port / 'runtime/sh3'
+        runtime.parent.mkdir()
+        native = runtime.with_name('native')
+        shutil.copyfile(os.environ['SH3_RUNTIME_BINARY'], native)
+        native.chmod(0o755)
+        out = Path(os.environ['SH3_GAME_REFERENCE_OUT']).parent / 'quiet-runtime'
+        out.mkdir()
+        for name, broken, expected in [('normal', False, 0), ('fatal', True, 1)]:
+            runtime.write_text('#!/bin/sh\n' + ('unset SH3_DATA_DIR\n' if broken else '') +
+                               'exec "$(dirname "$0")/native" "$@"\n')
+            runtime.chmod(0o755)
+            result = self.launch(SH3_MODE='game', SH3_DATA_DIR=os.environ['SH3_GAME_DATA'],
+                                 SH3_RUN_ID=name, SH3_DIRECT_PLAY='1', SH3_QUIET='1',
+                                 SH3_GL_BACKEND='desktop', SDL_VIDEODRIVER='offscreen',
+                                 SDL_AUDIODRIVER='dummy', LIBGL_ALWAYS_SOFTWARE='1',
+                                 SH3_QUIT_AFTER='5')
+            shutil.copytree(self.port / 'runs' / name, out / name)
+            self.assertEqual(result.returncode, expected, result.stderr[-4000:])
+            self.assertEqual(result.stderr, '', 'quiet runtime must avoid formatting/emitting diagnostic lines')
+            self.assertFalse(list(self.port.rglob('sh3*.log')), 'quiet failures must not record crash files')
+
+    def check_exit_combo(self, scripted, input_matrix=False, direct=False):
         runtime = self.port / "runtime/sh3"
         runtime.parent.mkdir()
         shutil.copyfile(os.environ["SH3_RUNTIME_BINARY"], runtime)
@@ -146,18 +204,25 @@ sys.exit(child.wait())
         env.pop("SH3_QUIT_AFTER", None)
         if not scripted:
             env.pop("SH3_KEYS")
+        if direct:
+            env['SH3_DIRECT_PLAY'] = '1'
         if input_matrix:
             env.update(SH3_INPUT_LOG="1", SH3_TEST_INPUT_MATRIX="1")
         result = subprocess.run(["timeout", "--kill-after=3s", "9s", "bash",
                                  str(REPO / "ports/Silent Hill 3.sh")],
                                 env=env, capture_output=True, text=True, timeout=20)
         logs = (self.port / "runs/game-hotkey/stderr.txt").read_text()
+        if direct:
+            out = Path(os.environ['SH3_GAME_REFERENCE_OUT']).parent / 'direct-play'
+            shutil.copytree(self.port / 'runs/game-hotkey', out)
+            self.assertIn('CreateDevice 640x480', logs,
+                          'direct play must enter actual game before Select+Start, without launcher input')
         for phase in [1, 2, 3]:
             self.assertIn(f"virtual pad phase={phase}", logs, logs[-8000:])
         self.assertEqual(result.returncode, 0, logs[-8000:])
         if scripted:
             self.assertIn("ExitProcess(0)", logs)
-        else:
+        elif not direct:
             self.assertNotIn("CreateDevice", logs, "combo must close launcher before starting game")
         self.assertIn("frontend ready", result.stdout)
         if input_matrix:

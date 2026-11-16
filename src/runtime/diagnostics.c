@@ -1,5 +1,4 @@
 /* Native Linux runtime gate, independent of rendering and original assets. */
-#ifndef __SWITCH__
 #include "rt.h"
 #include "host.h"
 #include <stdatomic.h>
@@ -241,4 +240,3 @@ int rt_runtime_diagnostics(void) {
     if (!status) puts("runtime=PASS rendering=untested");
     return status;
 }
-#endif

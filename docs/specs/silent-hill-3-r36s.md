@@ -4,6 +4,20 @@ Status: published planning spec. Scope, graphics route, and primary test boundar
 
 This is canonical feature spec. Research describes evidence and proposals; this spec defines requested behavior. Tracker issue must link this document and retain task history, prerequisite results, and remaining gaps.
 
+## Public preview update — 2026-11-16
+
+Owner explicitly requested public R36S 30 FPS preview ZIP, installation guide,
+credits and repository branch split. This authorizes preview distribution before
+Full port acceptance; it does not pass or remove AC04/AC05 or unresolved
+performance/audio/campaign criteria. Release profile is 320×240 Internal
+resolution scaled to 640×480 Output resolution, with 30 FPS cap and quiet direct
+launch from personal setup. Original FMVs remain skipped. Public PortMaster
+catalogue submission and broad firmware certification remain outside this change.
+`research` preserves specs/reports/tests/device workflows; `dev` holds lean
+build/runtime source plus player and developer guides. Owner also explicitly
+requested upload of existing uncommitted work. No implementation issue closure
+was requested by this repository/publication task.
+
 ## Problem Statement
 
 Owner wants complete Silent Hill 3 on personal R36S running dArkOS, launched through PortMaster and playable with handheld controls. Existing Switch port shares ARM64 instruction family with R36S, but shared CPU architecture does not supply Linux runtime compatibility, supported graphics operations, enough memory, or required performance.

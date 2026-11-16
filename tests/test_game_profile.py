@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import re
 import shutil
+from statistics import median
 import subprocess
+import time
 import unittest
 
 from test_preflight import LauncherFixture, REPO
@@ -61,6 +63,346 @@ class RouteTransitionTests(LauncherFixture):
 
 @unittest.skipUnless(os.environ.get('SH3_PROFILE_TEST'), 'requires owner checkpoint in ARM64 Docker')
 class GameProfileTests(LauncherFixture):
+    def test_coarse_gl_trace_preserves_sync_and_chunk_costs_without_async_command_observation(self):
+        runtime = self.port / 'runtime/sh3'
+        runtime.parent.mkdir()
+        shutil.copyfile(os.environ['SH3_RUNTIME_BINARY'], runtime)
+        runtime.chmod(0o755)
+        out = Path('/evidence/gl-coarse')
+        out.mkdir()
+        observer = out / 'gl-coarse.so'
+        subprocess.run(['cc', '-shared', '-fPIC', str(REPO / 'tests/presentation-cost.c'),
+                        '-o', str(observer), '-lSDL2', '-ldl'], check=True)
+
+        def launch(name, coarse, trace='1', profiled=True, seconds=14):
+            report = out / f'{name}.csv'
+            env = {**os.environ, 'SH3_MODE': 'game', 'SH3_PORT_ROOT': str(self.port),
+                   'SH3_DATA_DIR': '/owner', 'SH3_RUN_ID': name,
+                   'SH3_PACKAGE_DIR': str(REPO), 'SH3_SESSION_ISOLATED': '1',
+                   'XDG_DATA_HOME': str(self.root / 'xdg'), 'SH3_GL_BACKEND': 'desktop',
+                   'SDL_VIDEODRIVER': 'offscreen', 'SDL_AUDIODRIVER': 'dummy',
+                   'LIBGL_ALWAYS_SOFTWARE': '1', 'SH3_GPU_PROFILE': '0',
+                   'SH3_INTERNAL_RESOLUTION': '320x240', 'SH3_FPS_LIMIT': '30',
+                   'SH3_GL_THREAD': '1', 'SH3_KEYS': '10:Return+0.4',
+                   'SH3_QUIT_AFTER': str(seconds), 'LD_PRELOAD': str(observer),
+                   'SH3_TEST_GL_MS': '20', 'SH3_TEST_ASYNC_GL_MS': '20'}
+            for key in ('SH3_SHOT', 'SH3_SHOT_EVERY', 'SH3_PRESENT_DUMP', 'SH3_PEEK',
+                        'SH3_PROFILE', 'SH3_GL_TRACE', 'SH3_GL_DRAIN', 'SH3_GL_TRACE_COARSE',
+                        'SH3_SWAP_INTERVAL', 'SH3_SEED_SESSION', 'SH3_TEST_SWAP_MS',
+                        'SH3_TEST_FINISH_MS'):
+                env.pop(key, None)
+            if coarse is not None:
+                env['SH3_GL_TRACE_COARSE'] = coarse
+            if trace is not None:
+                env['SH3_GL_TRACE'] = trace
+            if profiled:
+                env['SH3_PROFILE'] = str(report)
+            result = subprocess.run(['bash', str(REPO / 'ports/Silent Hill 3.sh')], env=env,
+                                    capture_output=True, text=True, timeout=seconds + 20)
+            (out / f'{name}-stdout.txt').write_text(result.stdout)
+            (out / f'{name}-stderr.txt').write_text(result.stderr)
+            shutil.copytree(self.port / f'runs/{name}', out / name)
+            self.assertIn('frontend ready', result.stdout)
+            return result, report, (out / name / 'stderr.txt').read_text()
+
+        result, report, logs = launch('coarse-on', '1')
+        self.assertEqual(result.returncode, 0, logs[-3000:])
+        self.assertIn('ExitProcess(0)', logs)
+        delayed = re.findall(r'gl_block_boundary api=glClear wall_ms=([\d.]+) start_counter=(\d+) end_counter=(\d+)', logs)
+        self.assertEqual(len(delayed), 1, 'independent asynchronous GL sleep oracle did not execute')
+        wall, start, end = delayed[0]
+        self.assertGreaterEqual(float(wall), 20)
+        synchronous = re.findall(r'gl_block_boundary api=glGenTextures wall_ms=([\d.]+)', logs)
+        self.assertEqual(len(synchronous), 1, 'independent synchronous GL sleep oracle did not execute')
+        self.assertGreaterEqual(float(synchronous[0]), 20)
+        with Path(str(report) + '.gl.csv').open() as stream:
+            events = list(csv.DictReader(stream))
+        self.assertIn('profile_gl_trace_mode=coarse', logs)
+        self.assertFalse(any(e['event'] == 'command' and e['api'] == 'async' for e in events),
+                         'coarse trace still observes individual asynchronous commands')
+        enclosing = [e for e in events if e['lane'] == 'worker' and e['event'] == 'chunk'
+                     and int(e['start_counter']) <= int(start) and int(e['end_counter']) >= int(end)]
+        self.assertEqual(len(enclosing), 1, 'asynchronous driver stall missing from enclosing chunk')
+        self.assertGreaterEqual(float(enclosing[0]['wall_ms']), 19)
+        blocked = [e for e in events if e['lane'] == 'worker' and e['event'] == 'command'
+                   and e['api'] == 'glGenTextures' and float(e['wall_ms']) >= 19]
+        self.assertEqual(len(blocked), 1, 'coarse trace lost blocked synchronous GL call')
+        self.assertLess(float(blocked[0]['cpu_ms']), float(blocked[0]['wall_ms']) - 15)
+        waiting = [e for e in events if e['lane'] == 'producer' and e['event'] == 'sync'
+                   and e['api'] == 'glGenTextures' and e['frame'] == blocked[0]['frame']
+                   and e['job'] == blocked[0]['job']]
+        self.assertTrue(waiting, 'coarse trace lost producer sync identity')
+        with Path(str(report) + '.presents.csv').open() as stream:
+            frames = {r['frame'] for r in csv.DictReader(stream)}
+        self.assertIn(enclosing[0]['frame'], frames)
+        self.assertIn(blocked[0]['frame'], frames)
+        self.assertRegex(logs, r'profile_gl_trace lane=worker events=\d+ dropped=0')
+        self.assertRegex(logs, r'profile_gl_trace lane=producer events=\d+ dropped=0')
+        for index, (value, trace, profiled) in enumerate([
+                ('0', '1', True), ('', '1', True), ('2', '1', True),
+                ('1', None, True), ('1', '1', False), ('1', None, False)]):
+            with self.subTest(coarse=value, trace=trace, profiled=profiled):
+                result, report, logs = launch(f'coarse-invalid-{index}', value, trace, profiled, 1)
+                self.assertEqual(result.returncode, 2, logs[-2000:])
+                self.assertIn('SH3_GL_TRACE_COARSE requires SH3_PROFILE, SH3_GL_TRACE=1 and value 1', logs)
+                self.assertNotIn('save:', logs)
+                self.assertNotIn('CreateDevice', logs)
+                self.assertFalse(Path(str(report) + '.gl.csv').exists())
+        self.assertEqual(self.save.read_bytes(), b'owner save remains unchanged')
+
+    def test_profile_only_gpu_drain_is_separate_from_actual_swap_wait(self):
+        runtime = self.port / 'runtime/sh3'
+        runtime.parent.mkdir()
+        shutil.copyfile(os.environ['SH3_RUNTIME_BINARY'], runtime)
+        runtime.chmod(0o755)
+        out = Path('/evidence/gl-drain')
+        out.mkdir()
+        observer = out / 'gl-drain.so'
+        subprocess.run(['cc', '-shared', '-fPIC', str(REPO / 'tests/presentation-cost.c'),
+                        '-o', str(observer), '-lSDL2', '-ldl'], check=True)
+
+        def launch(name, drain, trace='1', profiled=True, seconds=14):
+            report = out / f'{name}.csv'
+            env = {**os.environ, 'SH3_MODE': 'game', 'SH3_PORT_ROOT': str(self.port),
+                   'SH3_DATA_DIR': '/owner', 'SH3_RUN_ID': name,
+                   'SH3_PACKAGE_DIR': str(REPO), 'SH3_SESSION_ISOLATED': '1',
+                   'XDG_DATA_HOME': str(self.root / 'xdg'), 'SH3_GL_BACKEND': 'desktop',
+                   'SDL_VIDEODRIVER': 'offscreen', 'SDL_AUDIODRIVER': 'dummy',
+                   'LIBGL_ALWAYS_SOFTWARE': '1', 'SH3_GPU_PROFILE': '0',
+                   'SH3_INTERNAL_RESOLUTION': '320x240', 'SH3_FPS_LIMIT': '30',
+                   'SH3_GL_THREAD': '1', 'SH3_KEYS': '10:Return+0.4',
+                   'SH3_QUIT_AFTER': str(seconds), 'LD_PRELOAD': str(observer),
+                   'SH3_TEST_FINISH_MS': '20', 'SH3_TEST_SWAP_MS': '20'}
+            for key in ('SH3_SHOT', 'SH3_SHOT_EVERY', 'SH3_PRESENT_DUMP', 'SH3_PEEK',
+                        'SH3_PROFILE', 'SH3_GL_TRACE', 'SH3_GL_DRAIN', 'SH3_TEST_GL_MS',
+                        'SH3_SWAP_INTERVAL', 'SH3_SEED_SESSION', 'SH3_GL_TRACE_COARSE',
+                        'SH3_TEST_ASYNC_GL_MS'):
+                env.pop(key, None)
+            if drain is not None:
+                env['SH3_GL_DRAIN'] = drain
+            if trace is not None:
+                env['SH3_GL_TRACE'] = trace
+            if profiled:
+                env['SH3_PROFILE'] = str(report)
+            result = subprocess.run(['bash', str(REPO / 'ports/Silent Hill 3.sh')], env=env,
+                                    capture_output=True, text=True, timeout=seconds + 20)
+            (out / f'{name}-stdout.txt').write_text(result.stdout)
+            (out / f'{name}-stderr.txt').write_text(result.stderr)
+            shutil.copytree(self.port / f'runs/{name}', out / name)
+            self.assertIn('frontend ready', result.stdout)
+            return result, report, (out / name / 'stderr.txt').read_text()
+
+        result, report, logs = launch('drain-on', '1')
+        self.assertEqual(result.returncode, 0, logs[-3000:])
+        self.assertIn('ExitProcess(0)', logs)
+        boundaries = re.findall(r'presentation_boundary screen=1 offscreen=\d+ finish=(\d+) finish_ms=([\d.]+) swap_ms=([\d.]+)', logs)
+        self.assertGreater(len(boundaries), 10)
+        self.assertTrue(all(int(calls) == 1 for calls, _, _ in boundaries),
+                        'diagnostic did not finish GL exactly once before each real SDL swap')
+        self.assertTrue(all(float(wall) >= 20 for _, wall, _ in boundaries))
+        with Path(str(report) + '.gl.csv').open() as stream:
+            events = list(csv.DictReader(stream))
+        drains = [e for e in events if e['event'] == 'drain' and e['api'] == 'glFinish']
+        with Path(str(report) + '.presents.csv').open() as stream:
+            presents = list(csv.DictReader(stream))
+        self.assertEqual(len(drains), len(boundaries))
+        self.assertEqual([e['frame'] for e in drains], [r['frame'] for r in presents])
+        for drain, present in zip(drains, presents):
+            self.assertEqual(drain['lane'], 'worker')
+            self.assertGreaterEqual(float(drain['wall_ms']), 19)
+            self.assertLess(float(drain['cpu_ms']), float(drain['wall_ms']) - 15,
+                            'independent GPU-drain sleep counted as CPU')
+            self.assertGreaterEqual(float(present['swap_ms']), 19)
+        # Compare to measured external Swap, whose scheduling/driver cost can exceed20ms.
+        # Including the distinct Finish delay would shift this median by at least20ms.
+        swap_errors = [abs(float(present['swap_ms']) - float(boundary[2]))
+                       for present, boundary in zip(presents, boundaries)]
+        self.assertLess(median(swap_errors), 2,
+                        'separate drain sleep leaked into SDL swap interval')
+        self.assertRegex(logs, r'profile_clock_end raw_before_ns=\d+ monotonic_before_ns=\d+ realtime_before_ns=\d+ sdl_ticks_ms=\d+ perf_counter=\d+ perf_frequency=\d+ realtime_after_ns=\d+ monotonic_after_ns=\d+ raw_after_ns=\d+')
+
+        result, report, logs = launch('drain-off', None)
+        self.assertEqual(result.returncode, 0, logs[-3000:])
+        self.assertNotRegex(logs, r'presentation_boundary .* finish=[1-9]')
+        with Path(str(report) + '.gl.csv').open() as stream:
+            self.assertFalse(any(e['event'] == 'drain' for e in csv.DictReader(stream)))
+        for index, (value, trace, profiled) in enumerate([
+                ('0', '1', True), ('', '1', True), ('2', '1', True),
+                ('1', None, True), ('1', None, False)]):
+            with self.subTest(drain=value, trace=trace, profiled=profiled):
+                result, report, logs = launch(f'drain-invalid-{index}', value, trace, profiled, 1)
+                self.assertEqual(result.returncode, 2, logs[-2000:])
+                self.assertIn('SH3_GL_DRAIN requires SH3_PROFILE, SH3_GL_TRACE=1 and value 1', logs)
+                self.assertNotIn('save:', logs)
+                self.assertNotIn('CreateDevice', logs)
+                self.assertFalse(Path(str(report) + '.gl.csv').exists())
+        self.assertEqual(self.save.read_bytes(), b'owner save remains unchanged')
+
+    def test_opt_in_gl_trace_localizes_blocked_driver_and_producer_wait(self):
+        runtime = self.port / 'runtime/sh3'
+        runtime.parent.mkdir()
+        shutil.copyfile(os.environ['SH3_RUNTIME_BINARY'], runtime)
+        runtime.chmod(0o755)
+        out = Path('/evidence/gl-trace')
+        out.mkdir()
+        observer = out / 'gl-trace.so'
+        subprocess.run(['cc', '-shared', '-fPIC', str(REPO / 'tests/presentation-cost.c'),
+                        '-o', str(observer), '-lSDL2', '-ldl'], check=True)
+
+        def launch(name, trace, profiled=True, seconds=14):
+            report = out / f'{name}.csv'
+            env = {**os.environ, 'SH3_MODE': 'game', 'SH3_PORT_ROOT': str(self.port),
+                   'SH3_DATA_DIR': '/owner', 'SH3_RUN_ID': name,
+                   'SH3_PACKAGE_DIR': str(REPO), 'SH3_SESSION_ISOLATED': '1',
+                   'XDG_DATA_HOME': str(self.root / 'xdg'), 'SH3_GL_BACKEND': 'desktop',
+                   'SDL_VIDEODRIVER': 'offscreen', 'SDL_AUDIODRIVER': 'dummy',
+                   'LIBGL_ALWAYS_SOFTWARE': '1', 'SH3_GPU_PROFILE': '0',
+                   'SH3_GL_THREAD': '1',
+                   'SH3_INTERNAL_RESOLUTION': '320x240', 'SH3_FPS_LIMIT': '30',
+                   'SH3_QUIT_AFTER': str(seconds), 'LD_PRELOAD': str(observer),
+                   'SH3_TEST_GL_MS': '20'}
+            for key in ('SH3_SHOT', 'SH3_SHOT_EVERY', 'SH3_PRESENT_DUMP', 'SH3_PEEK',
+                        'SH3_PROFILE', 'SH3_GL_TRACE', 'SH3_GL_DRAIN', 'SH3_KEYS',
+                        'SH3_SWAP_INTERVAL', 'SH3_SEED_SESSION', 'SH3_TEST_SWAP_MS',
+                        'SH3_GL_TRACE_COARSE', 'SH3_TEST_ASYNC_GL_MS'):
+                env.pop(key, None)
+            if trace is not None:
+                env['SH3_GL_TRACE'] = trace
+            if profiled:
+                env['SH3_PROFILE'] = str(report)
+            env['SH3_KEYS'] = '10:Return+0.4'
+            before = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
+            result = subprocess.run(['bash', str(REPO / 'ports/Silent Hill 3.sh')], env=env,
+                                    capture_output=True, text=True, timeout=seconds + 20)
+            after = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
+            (out / f'{name}-stdout.txt').write_text(result.stdout)
+            (out / f'{name}-stderr.txt').write_text(result.stderr)
+            shutil.copytree(self.port / f'runs/{name}', out / name)
+            logs = (out / name / 'stderr.txt').read_text()
+            self.assertIn('frontend ready', result.stdout)
+            return result, report, logs, before, after
+
+        result, report, logs, before, after = launch('trace-on', '1')
+        self.assertEqual(result.returncode, 0, logs[-3000:])
+        self.assertIn('ExitProcess(0)', logs)
+        self.assertIn('profile_gl_trace_mode=full', logs)
+        delayed = re.findall(r'gl_block_boundary api=glGenTextures wall_ms=([\d.]+)', logs)
+        self.assertEqual(len(delayed), 1, 'independent GL sleep oracle did not execute')
+        self.assertGreaterEqual(float(delayed[0]), 20)
+        trace_path = Path(str(report) + '.gl.csv')
+        self.assertTrue(trace_path.is_file(), 'requested GL critical-path trace missing')
+        with trace_path.open() as stream:
+            events = list(csv.DictReader(stream))
+        blocked = [e for e in events if e['lane'] == 'worker' and e['event'] == 'command'
+                   and e['api'] == 'glGenTextures' and float(e['wall_ms']) >= 19]
+        self.assertEqual(len(blocked), 1, 'trace did not isolate delayed real GL driver call')
+        self.assertLess(float(blocked[0]['cpu_ms']), float(blocked[0]['wall_ms']) - 15,
+                        'blocked GL sleep was counted as thread CPU')
+        waiting = [e for e in events if e['lane'] == 'producer' and e['event'] == 'sync'
+                   and e['api'] == 'glGenTextures' and e['job'] == blocked[0]['job']
+                   and e['frame'] == blocked[0]['frame'] and float(e['wall_ms']) >= 19]
+        self.assertTrue(waiting, 'producer sync wait lacks API and timeline identity')
+        self.assertLess(float(waiting[0]['cpu_ms']), float(waiting[0]['wall_ms']) - 15)
+        self.assertLessEqual(int(waiting[0]['start_counter']), int(blocked[0]['start_counter']))
+        self.assertGreaterEqual(int(waiting[0]['end_counter']), int(blocked[0]['end_counter']))
+        self.assertTrue(any(e['event'] == 'chunk' and float(e['wall_ms']) >= 19 for e in events))
+        with Path(str(report) + '.presents.csv').open() as stream:
+            frames = {r['frame'] for r in csv.DictReader(stream)}
+        self.assertIn(blocked[0]['frame'], frames, 'trace frame cannot join actual completion')
+        anchors = re.findall(
+            r'profile_clock raw_before_ns=(\d+) monotonic_before_ns=(\d+) realtime_before_ns=(\d+) '
+            r'sdl_ticks_ms=(\d+) perf_counter=(\d+) perf_frequency=(\d+) realtime_after_ns=(\d+) '
+            r'monotonic_after_ns=(\d+) raw_after_ns=(\d+)', logs)
+        self.assertEqual(len(anchors), 1, 'SDL/RAW/MONOTONIC epoch cannot be correlated')
+        raw0, mono0, real0, ticks, counter, frequency, real1, mono1, raw1 = map(int, anchors[0])
+        self.assertLessEqual(before, raw0)
+        self.assertLessEqual(raw0, raw1)
+        self.assertLessEqual(raw1, after)
+        self.assertLess(raw1 - raw0, 10_000_000, 'clock correlation bracket too broad')
+        self.assertLessEqual(mono0, mono1)
+        self.assertLessEqual(real0, real1)
+        self.assertGreater(real0, 1_000_000_000_000_000_000)
+        self.assertGreater(counter, 0)
+        self.assertGreater(frequency, 0)
+        self.assertLess(ticks, 14_000)
+        self.assertRegex(logs, r'profile_gl_provider video=offscreen sdl=\d+\.\d+\.\d+ library=\S+')
+        self.assertRegex(logs, r'profile_gl_trace lane=worker events=\d+ dropped=0')
+        self.assertRegex(logs, r'profile_gl_trace lane=producer events=\d+ dropped=0')
+
+        result, report, logs, _, _ = launch('trace-off', None, False)
+        self.assertEqual(result.returncode, 0, logs[-3000:])
+        self.assertFalse(Path(str(report) + '.gl.csv').exists())
+        self.assertNotIn('profile_clock', logs)
+        self.assertNotIn('profile_gl_trace', logs)
+        self.assertNotIn('profile_gl_provider', logs)
+        for index, (value, profiled) in enumerate([('0', True), ('', True), ('2', True), ('1', False)]):
+            with self.subTest(trace=value, profiled=profiled):
+                result, report, logs, _, _ = launch(f'trace-invalid-{index}', value, profiled, 1)
+                self.assertEqual(result.returncode, 2, logs[-2000:])
+                self.assertIn('SH3_GL_TRACE requires SH3_PROFILE and value 1', logs)
+                self.assertNotIn('save:', logs)
+                self.assertNotIn('CreateDevice', logs)
+                self.assertFalse(Path(str(report) + '.gl.csv').exists())
+        self.assertEqual(self.save.read_bytes(), b'owner save remains unchanged')
+
+    def test_profiled_swap_override_records_driver_status_and_rejects_invalid_settings(self):
+        runtime = self.port / 'runtime/sh3'
+        runtime.parent.mkdir()
+        shutil.copyfile(os.environ['SH3_RUNTIME_BINARY'], runtime)
+        runtime.chmod(0o755)
+        out = Path('/evidence/swap-interval')
+        out.mkdir()
+        observer = out / 'swap-interval.so'
+        subprocess.run(['cc', '-shared', '-fPIC', str(REPO / 'tests/presentation-cost.c'),
+                        '-o', str(observer), '-lSDL2', '-ldl'], check=True)
+        settings = [('0', True), ('1', True), ('2', True), ('-1', True),
+                    ('fast', True), ('', True), ('0', False)]
+        for index, (interval, profiled) in enumerate(settings):
+            with self.subTest(interval=interval, profiled=profiled):
+                name = f'swap-{index}'
+                report = out / f'{name}.csv'
+                env = {**os.environ, 'SH3_MODE': 'game', 'SH3_PORT_ROOT': str(self.port),
+                       'SH3_DATA_DIR': '/owner', 'SH3_RUN_ID': name,
+                       'SH3_PACKAGE_DIR': str(REPO), 'SH3_SESSION_ISOLATED': '1',
+                       'XDG_DATA_HOME': str(self.root / 'xdg'), 'SH3_GL_BACKEND': 'desktop',
+                       'SDL_VIDEODRIVER': 'offscreen', 'SDL_AUDIODRIVER': 'dummy',
+                       'LIBGL_ALWAYS_SOFTWARE': '1', 'SH3_GPU_PROFILE': '0',
+                       'SH3_INTERNAL_RESOLUTION': '320x240', 'SH3_FPS_LIMIT': '30',
+                       'SH3_KEYS': '10:Return+0.4', 'SH3_QUIT_AFTER': '14',
+                       'SH3_SWAP_INTERVAL': interval, 'LD_PRELOAD': str(observer)}
+                for key in ('SH3_SHOT', 'SH3_SHOT_EVERY', 'SH3_PRESENT_DUMP', 'SH3_PEEK',
+                            'SH3_PROFILE', 'SH3_TEST_SWAP_MS', 'SH3_SEED_SESSION'):
+                    env.pop(key, None)
+                if profiled:
+                    env['SH3_PROFILE'] = str(report)
+                result = subprocess.run(['bash', str(REPO / 'ports/Silent Hill 3.sh')], env=env,
+                                        capture_output=True, text=True, timeout=30)
+                (out / f'{name}-stdout.txt').write_text(result.stdout)
+                (out / f'{name}-stderr.txt').write_text(result.stderr)
+                shutil.copytree(self.port / f'runs/{name}', out / name)
+                logs = (out / name / 'stderr.txt').read_text()
+                self.assertIn('frontend ready', result.stdout)
+                observed = re.findall(
+                    r'swap_interval_boundary requested=(-?\d+) result=(-?\d+) effective=(-?\d+)', logs)
+                if interval in ('0', '1') and profiled:
+                    self.assertEqual(result.returncode, 0, logs[-3000:])
+                    self.assertIn('ExitProcess(0)', logs)
+                    self.assertEqual(len(observed), 1, 'missing actual SDL swap configuration')
+                    requested, status, effective = observed[0]
+                    self.assertEqual(requested, interval, 'diagnostic swap request ignored')
+                    self.assertIn(f'gl_swap_interval requested={requested} result={status} effective={effective}',
+                                  logs, 'native report does not match actual SDL result')
+                    with Path(str(report) + '.presents.csv').open() as stream:
+                        self.assertGreater(len(list(csv.DictReader(stream))), 10)
+                    self.assertNotIn('capture frame', logs)
+                else:
+                    self.assertEqual(result.returncode, 2, logs[-3000:])
+                    self.assertIn('SH3_SWAP_INTERVAL requires SH3_PROFILE and value 0 or 1', logs)
+                    self.assertEqual(observed, [], 'invalid setting reached real GL context')
+                    self.assertNotIn('save:', logs, 'invalid setting started guest file access')
+                    self.assertNotIn('CreateDevice', logs, 'invalid setting started game rendering')
+        self.assertEqual(self.save.read_bytes(), b'owner save remains unchanged')
+
     def test_near_budget_checkpoint_does_not_latch_to_twenty_fps(self):
         runtime = self.port / 'runtime/sh3'
         runtime.parent.mkdir()
@@ -210,7 +552,7 @@ class GameProfileTests(LauncherFixture):
                'LD_PRELOAD': str(observer) + ':' + str(swap_observer), 'SH3_TEST_SWAP_MS': '20',
                'SH3_KEYS': '10:Return+0.4,30:Down+0.2,32:Return+0.4,34:Return+0.4,36:Return+0.4',
                'SH3_QUIT_AFTER': '62', 'SH3_INTERNAL_RESOLUTION': '640x480'}
-        for key in ('SH3_SHOT', 'SH3_SHOT_EVERY', 'SH3_PRESENT_DUMP', 'SH3_GPU_PROFILE'):
+        for key in ('SH3_SHOT', 'SH3_SHOT_EVERY', 'SH3_PRESENT_DUMP', 'SH3_GPU_PROFILE', 'SH3_SWAP_INTERVAL'):
             env.pop(key, None)
         with (out / 'game-stdout.txt').open('w') as stdout, (out / 'game-stderr.txt').open('w') as stderr:
             result = subprocess.run(['bash', str(REPO / 'ports/Silent Hill 3.sh')], env=env,
@@ -219,6 +561,10 @@ class GameProfileTests(LauncherFixture):
         shutil.copytree(run, out / 'launcher')
         logs = (run / 'stderr.txt').read_text()
         self.assertEqual(result.returncode, 0, logs[-4000:])
+        defaults = re.findall(r'swap_interval_boundary requested=1 result=(-?\d+) effective=(-?\d+)', logs)
+        self.assertEqual(len(defaults), 1, 'default swap request changed from retrace synchronization')
+        status, effective = defaults[0]
+        self.assertIn(f'gl_swap_interval requested=1 result={status} effective={effective}', logs)
         self.assertNotIn('gpu_profile=enabled', (run / 'stdout.txt').read_text(),
                          'frame-cadence profiling unexpectedly enabled costly GPU queries')
         self.assertFalse(Path(str(report) + '.gpu.csv').exists())
@@ -265,6 +611,14 @@ class GameProfileTests(LauncherFixture):
             self.assertGreaterEqual(float(row['swap_ms']), 19,
                                     'timing missed delay at actual worker SDL boundary')
             self.assertGreater(float(row['wall_ms']), 0)
+            self.assertGreater(float(row.get('worker_cpu_ms', 0)), 0,
+                               'completion report omits render-worker CPU time')
+            self.assertGreaterEqual(float(row.get('swap_cpu_ms', -1)), 0,
+                                    'completion report omits on-CPU swap cost')
+            self.assertLess(float(row['swap_cpu_ms']), float(row['swap_ms']) - 15,
+                            'blocked SDL sleep was counted as render-worker CPU')
+            self.assertLessEqual(float(row['swap_cpu_ms']), float(row['worker_cpu_ms']) + 0.1)
+            self.assertLessEqual(float(row['worker_cpu_ms']), float(row['wall_ms']) * 1.1 + 1)
             self.assertEqual((int(row['internal_w']),int(row['internal_h'])), (640,480))
         for previous, current in zip(presents,presents[1:]):
             self.assertGreaterEqual(int(current['elapsed_ms']),int(previous['elapsed_ms']))

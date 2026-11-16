@@ -22,7 +22,7 @@ static uint32_t u32(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
 extern uint32_t rt_res_w, rt_res_h;  /* the resolution sh3.ini asks for (rt_core.c): always offered as the last mode */
 static uint32_t modes[][2] = {{640, 480}, {800, 600}, {1024, 768}, {1280, 720}, {1280, 960},
                                     {1280, 1024}, {1600, 900}, {1920, 1080}, {960, 720}, {1440, 1080}, {0, 0}};
-/* The last two are 4:3 at the Switch's 720p and 1080p heights. */
+/* Additional 4:3 modes remain available for desktop comparison. */
 #define N_MODES (sizeof modes / sizeof *modes)
 static void sync_modes(void) { modes[N_MODES - 1][0] = rt_res_w; modes[N_MODES - 1][1] = rt_res_h; }
 
@@ -149,7 +149,11 @@ void gl_context_open(void) {
         if (!ctx) rt_log("GL %d.%d core: %s", versions[i][0], versions[i][1], SDL_GetError());
     }
     if (!ctx) rt_fatal("no OpenGL 4.3+ core context: %s", SDL_GetError());
-    SDL_GL_SetSwapInterval(1);
+    const char *override = getenv("SH3_SWAP_INTERVAL");  /* validated before guest startup */
+    int interval = override ? atoi(override) : 1;
+    int result = SDL_GL_SetSwapInterval(interval);
+    rt_log("gl_swap_interval requested=%d result=%d effective=%d",
+           interval, result, SDL_GL_GetSwapInterval());
     gl_load();
 }
 

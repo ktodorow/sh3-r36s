@@ -20,7 +20,7 @@ void rt_set_last_error(uint32_t e) { last_error = e; }
 
 /* ---- paths ---- */
 
-/* Finds name in dir ignoring case. Linux file systems are case sensitive, Windows (and the Switch SD card) not. */
+/* Finds name in dir ignoring case. Linux file systems are case sensitive; Windows paths are not. */
 static int match_ci(const char *dir, const char *name, char *out, size_t n) {
     DIR *d = opendir(*dir ? dir : ".");
     struct dirent *e;
@@ -362,7 +362,6 @@ static void thread_started(Obj *o) {
     o->started = 1;
 }
 
-#ifndef __SWITCH__
 /* SH3_DUMP_AFTER=<seconds>: every guest thread prints where it is, for hangs (Linux only). */
 static void on_dump(int sig) {
     (void)sig;
@@ -377,15 +376,12 @@ static void dump_watchdog(void *arg) {
             usleep(300000);
         }
 }
-#endif
 
 /* Called on the thread that runs the game's entry point. */
 void rt_thread_init_main(uint32_t stack_size) {
-#ifndef __SWITCH__
     signal(SIGUSR1, on_dump);
     if (getenv("SH3_DUMP_AFTER"))
         host_thread_start(dump_watchdog, (void *)(uintptr_t)atoi(getenv("SH3_DUMP_AFTER")), 1u << 16);
-#endif
     setup_guest_thread(stack_size, next_tid++);
     self_handle = new_handle(H_THREAD);
     obj(self_handle)->tid = MEM32(g_fs_base + 0x24);
@@ -867,8 +863,7 @@ static void find_entry(uint32_t fd, const char *name, int dir, uint64_t size, ti
 }
 
 /* Windows lists "." and ".." first in any folder, and the save code counts them: a save folder is
- * whole when it holds 5 entries. Horizon's readdir has neither, so they are made up here, the same
- * on both hosts. */
+ * whole when it holds 5 entries. Emit both explicitly and skip duplicate host entries. */
 static int find_fill(Obj *o, uint32_t fd) {
     while (o->dir && o->dots < 2) {
         const char *dot = o->dots++ ? ".." : ".";

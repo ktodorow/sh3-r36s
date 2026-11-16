@@ -58,6 +58,24 @@ copy_state "$PORT_ROOT/state" "$RUN_DIR/persistent-state" || exit 3
     ls -l /dev/mali0 /dev/dri 2>/dev/null || true
 } > "$RUN_DIR/identity.txt" 2> "$RUN_DIR/identity.stderr.txt"
 {
+    probe monitor-uid id -u
+    probe proc-mount awk '$2 == "/proc" {print}' /proc/mounts
+    probe self-io cat /proc/self/io
+    probe root-self-io sudo -n sh -c 'printf "uid="; id -u; cat /proc/self/io; status=$?; printf "io-read-exit=%s\n" "$status"; exit "$status"'
+    printf '\n[kernel-io-config]\n'
+    for path in /proc/config.gz "/boot/config-$(uname -r)"; do
+        if [ -r "$path" ]; then
+            printf '[%s]\n' "$path"
+            case "$path" in
+                *.gz) gzip -cd "$path" ;;
+                *) cat "$path" ;;
+            esac | grep -E '^(# )?CONFIG_(TASK_IO_ACCOUNTING|TASK_XACCT|TASKSTATS|IKCONFIG|IKCONFIG_PROC)(=| )' || true
+        else
+            printf 'unavailable=%s\n' "$path"
+        fi
+    done
+} > "$RUN_DIR/io-capability.txt" 2> "$RUN_DIR/io-capability.stderr.txt"
+{
     if command -v ldconfig >/dev/null; then
         ldconfig -p | grep -E 'lib(EGL|GLES|GL\.|mali|Mali|SDL2|c\.so)'
         ldconfig -p | awk '/lib(EGL|GLES|GL\.|mali|Mali|SDL2|c\.so)/ {print $NF}' | sort -u |
@@ -72,7 +90,81 @@ copy_state "$PORT_ROOT/state" "$RUN_DIR/persistent-state" || exit 3
         echo 'missing-tool=ldconfig'
     fi
 } > "$RUN_DIR/libraries.txt" 2> "$RUN_DIR/libraries.stderr.txt"
+# Retain one existing AArch64 SDL provider for offline source/disassembly checks.
+# Evidence copy only; no library installation, replacement or permission changes.
+python3 - "$PORT_ROOT" "$RUN_DIR" <<'PY' > "$RUN_DIR/sdl-provider-capture.txt" 2> "$RUN_DIR/sdl-provider-capture.stderr.txt"
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+port, run = map(Path, sys.argv[1:])
+roots = [Path('/usr/lib'), Path('/lib'), Path('/opt/system/Tools/PortMaster'),
+         Path('/opt/tools/PortMaster'), Path('/roms2/ports/PortMaster'),
+         Path('/roms/ports/PortMaster'), port.parent / 'PortMaster',
+         Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'PortMaster']
+roots = [root.resolve() for root in roots]
+candidates = re.findall(r'^\[library (.+)\]$', (run / 'libraries.txt').read_text(), re.M)
+for candidate in candidates:
+    source = Path(candidate)
+    if source.name != 'libSDL2-2.0.so.0':
+        continue
+    resolved = source.resolve(strict=True)
+    if not any(resolved.is_relative_to(root) for root in roots):
+        print('skipped SDL provider outside recorded system/PortMaster library roots')
+        continue
+    if not 20 <= resolved.stat().st_size <= 32 * 1024 * 1024:
+        continue
+    data = resolved.read_bytes()
+    if data[:6] != b'\x7fELF\x02\x01' or int.from_bytes(data[18:20], 'little') != 183:
+        continue
+    destination = run / 'sdl-provider'
+    destination.mkdir()
+    (destination / 'library.so').write_bytes(data)
+    identity = {'source': str(source), 'resolved': str(resolved),
+                'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data),
+                'elf': {'class': 64, 'endian': 'little', 'machine': 183}}
+    (destination / 'identity.json').write_text(json.dumps(identity, indent=2) + '\n')
+    print(json.dumps(identity))
+    break
+else:
+    print('no eligible AArch64 SDL provider found')
+PY
 cat /proc/bus/input/devices > "$RUN_DIR/controllers.txt" 2> "$RUN_DIR/controllers.stderr.txt"
+SYSFS_ROOT=${SH3_SYSFS_ROOT:-/sys}
+{
+    for directory in "$SYSFS_ROOT"/devices/system/cpu/cpufreq/policy* \
+        "$SYSFS_ROOT"/class/devfreq/* "$SYSFS_ROOT"/class/thermal/thermal_zone*; do
+        [ -d "$directory" ] || continue
+        printf '\n[device %s]\n' "$directory"
+        readlink -f "$directory"
+        for name in affected_cpus related_cpus scaling_driver scaling_governor \
+            scaling_available_governors scaling_available_frequencies scaling_cur_freq \
+            scaling_min_freq scaling_max_freq cpuinfo_min_freq cpuinfo_max_freq \
+            name governor available_governors available_frequencies cur_freq min_freq max_freq load type temp; do
+            path="$directory/$name"
+            if [ -r "$path" ]; then printf '[%s]\n' "$path"; cat "$path"; fi
+        done
+        if [ -L "$directory/device/driver" ]; then readlink -f "$directory/device/driver"; fi
+    done
+} > "$RUN_DIR/power-policy.txt" 2> "$RUN_DIR/power-policy.stderr.txt"
+# Preserve only policy-related installed source/config, never execute firmware helpers.
+mkdir -p "$RUN_DIR/power-owners"
+for path in /etc/emulationstation/es_systems.cfg "$HOME/.emulationstation/es_systems.cfg" \
+    /usr/local/bin/perfmax /usr/local/bin/perfnorm /usr/bin/perfmax /usr/bin/perfnorm \
+    /usr/bin/emulationstation.sh /usr/bin/emulationstation /usr/bin/emulationstation/emulationstation.sh; do
+    [ -f "$path" ] || continue
+    case "$path" in
+        *.cfg) ;;
+        *) [ "$(head -c 2 "$path")" = '#!' ] || continue ;;
+    esac
+    destination="$RUN_DIR/power-owners$path"
+    mkdir -p "$(dirname "$destination")" || exit 3
+    cp -p "$path" "$destination" || exit 3
+    sha256sum "$path" >> "$RUN_DIR/power-owners.sha256"
+done
 mkdir -p "$RUN_DIR/input-configs"
 input_index=0
 for path in "$HOME/.emulationstation/es_input.cfg" "$HOME/.config/emulationstation/es_input.cfg" \
@@ -86,7 +178,9 @@ ps -C emulationstation -o pid=,stat=,comm= > "$RUN_DIR/frontend-before.txt" 2>/d
 {
     probe systemd systemctl --version
     probe frontend-service systemctl show emulationstation.service \
-        -p Id -p LoadState -p ActiveState -p SubState -p MainPID -p ControlGroup -p KillMode -p Restart
+        -p Id -p LoadState -p ActiveState -p SubState -p MainPID -p ControlGroup -p KillMode -p Restart \
+        -p FragmentPath -p ExecStart -p ExecStop -p ExecStopPost
+    probe frontend-unit systemctl cat emulationstation.service
     printf '\n[probe-cgroup]\n'
     cat "/proc/$$/cgroup"
     probe detached-launcher command -v systemd-run
@@ -118,28 +212,35 @@ for name in log.txt sh3.log sh3-crash.log; do
         cp -p "$PORT_ROOT/$name" "$RUN_DIR/existing-logs/$name"
     fi
 done > "$RUN_DIR/existing-logs-before.sha256"
-# Include completed menu launches without altering originals or recursing into payloads.
-for record in "$PORT_ROOT"/runs/*/run-id.txt; do
-    [ -f "$record" ] || continue
-    launch=$(dirname "$record")
-    [ -f "$launch/exit-status.txt" ] || continue
-    id=$(basename "$launch")
-    case "$id" in ''|*[!A-Za-z0-9_-]*) continue ;; esac
-    dest="$RUN_DIR/previous-launches/$id"
-    mkdir -p "$dest" || exit 3
-    for name in run-id.txt stdout.txt stderr.txt data.stderr.txt exit-status.txt; do
-        [ ! -f "$launch/$name" ] || cp -p "$launch/$name" "$dest/" || exit 3
-    done
-    # All game slots and preferences, including quicksave; never recurse into assets.
-    copy_state "$launch/session" "$dest/session" || exit 3
-    service="${launch}-service"
-    if [ -f "$service/exit-status.txt" ]; then
-        mkdir -p "$dest/service" || exit 3
-        for name in stdout.txt stderr.txt exit-status.txt cgroup.txt frontend-game.txt \
-            frontend-restored.txt memory-before.txt memory-game.txt memory-restored.txt \
-            performance.txt performance.stderr.txt frontend-stopped; do
-            [ ! -f "$service/$name" ] || cp -p "$service/$name" "$dest/service/" || exit 3
-        done
-    fi
-done
+# Reference completed originals instead of duplicating all history into every new run.
+python3 - "$PORT_ROOT" "$RUN_DIR/previous-launches.sha256" <<'PY_HISTORY' || exit 3
+import hashlib
+from pathlib import Path
+import sys
+
+port, output = map(Path, sys.argv[1:])
+with output.open('w') as manifest:
+    for record in sorted((port / 'runs').glob('*/run-id.txt')):
+        launch = record.parent
+        if not (launch / 'exit-status.txt').is_file():
+            continue
+        paths = [launch / name for name in
+                 ('run-id.txt', 'stdout.txt', 'stderr.txt', 'data.stderr.txt', 'exit-status.txt')]
+        state = launch / 'session'
+        paths += [state / name for name in ('sh3.ini', 'sh3-progs.bin', 'sh3-gl-cache.bin',
+                  'savedata/disp.ini', 'savedata/key.ini', 'savedata/data.sys')]
+        paths += sorted((state / 'savedata').glob('data.[0-9][0-9][0-9]'))
+        service = launch.with_name(launch.name + '-service')
+        paths += [service / name for name in ('stdout.txt', 'stderr.txt', 'exit-status.txt',
+                  'cgroup.txt', 'frontend-game.txt', 'frontend-restored.txt', 'memory-before.txt',
+                  'memory-game.txt', 'memory-restored.txt', 'performance.txt',
+                  'performance.stderr.txt', 'frontend-stopped')]
+        for path in paths:
+            if path.is_file():
+                checksum = hashlib.sha256()
+                with path.open('rb') as source:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                        checksum.update(chunk)
+                manifest.write(checksum.hexdigest() + '  ' + str(path) + '\n')
+PY_HISTORY
 echo 'Target observations collected; active SDL backend and GLES operations untested.'

@@ -25,9 +25,16 @@ else
     find src/recomp/gen -type f -print0 | sort -z | xargs -0 sha256sum > build/generated.sha256
     printf '%s\n' "$SH3_GENERATION_KEY" > build/generation-key.txt
 fi
-"$SH3_PYTHON" scripts/build/shader-samples.py "$SH3_EXE" build/arm64/generated/shader_samples.h
+samples=OFF
+case "${SH3_DIAGNOSTIC_SAMPLES:-1}" in
+    0) ;;
+    1)
+        "$SH3_PYTHON" scripts/build/shader-samples.py "$SH3_EXE" build/arm64/generated/shader_samples.h
+        samples=ON ;;
+    *) echo 'Unsupported diagnostic sample mode' >&2; exit 3 ;;
+esac
 cmake -S . -B build/arm64 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DNINTENDO_SWITCH=OFF -DSH3_GLES_SAMPLES=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    -DSH3_GLES_SAMPLES="$samples" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_C_FLAGS_RELWITHDEBINFO="-${SH3_OPTIMIZATION:-O2} -g -DNDEBUG" \
     -DCMAKE_C_FLAGS="-mcpu=cortex-a35 -ffile-prefix-map=/work=.${lto_flag:+ $lto_flag}" \
     -DCMAKE_EXE_LINKER_FLAGS="-fwrapv -fno-strict-aliasing${lto_flag:+ $lto_flag}"

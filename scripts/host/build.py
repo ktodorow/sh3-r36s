@@ -6,13 +6,84 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 
-from r36s import ROOT, check_ignores, config
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def config():
+    values = {}
+    path = ROOT / ".env"
+    for line in path.read_text().splitlines() if path.is_file() else []:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        key, sep, value = line.removeprefix("export ").partition("=")
+        if not sep or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", key.strip()):
+            raise ValueError("Invalid .env assignment; shell evaluation is disabled")
+        parts = shlex.split(value, comments=True)
+        if len(parts) > 1:
+            raise ValueError("Quote configuration values containing spaces")
+        values[key.strip()] = parts[0] if parts else ""
+    return values
+
+
+def check_ignores():
+    for path in [".env", "SILENT HILL 3/sh3.exe", "game/sh3.exe", "tmpRepo/check",
+                 "build/check", "dist/check", ".port-cache/check", "r36s-dumps/check", ".cache/check"]:
+        if subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT).returncode != 0:
+            raise ValueError("Required private-artifact ignore coverage missing")
+
+
+def package_release(runtime, input_sha1, epoch, commit):
+    """Allowlisted player files only; never archive a working installation."""
+    files = {
+        "Silent Hill 3.sh": ROOT / "ports/Silent Hill 3 Play.sh",
+        "sh3/runtime/sh3": runtime / "sh3",
+        "sh3/README.md": ROOT / "README.md",
+        "sh3/CREDITS.md": ROOT / "CREDITS.md",
+        "sh3/licenses/xboxrecomp-MIT.txt": ROOT / "third_party/xboxrecomp/LICENSE",
+        "sh3/preflight/scripts/build/check-data.sh": ROOT / "scripts/build/check-data.sh",
+        "sh3/preflight/scripts/required-data.txt": ROOT / "scripts/required-data.txt",
+    }
+    for name in ["Silent Hill 3 Game.sh", "Silent Hill 3.sh", "game-session.sh",
+                 "restore-frontend.sh", "performance-governors.py"]:
+        files["sh3/preflight/ports/" + name] = ROOT / "ports" / name
+    content = {name: path.read_bytes() for name, path in files.items()}
+    content["sh3/runtime/input.sha1"] = (input_sha1 + "\n").encode()
+    content["sh3/gamedata/README.txt"] = (
+        "No game files are included. You need your own copy of the PC game;\n"
+        "copy matching sh3.exe and complete data/ folder here. See ../README.md.\n"
+    ).encode()
+    content["sh3/release.json"] = (json.dumps({
+        "title": "Silent Hill 3", "architecture": "linux-aarch64", "source_commit": commit,
+        "input_sha1": input_sha1, "fps_limit": 30, "internal_resolution": "320x240",
+        "output_resolution": "640x480", "diagnostic_samples": False,
+        "binary_sha256": hashlib.sha256(content["sh3/runtime/sh3"]).hexdigest(),
+    }, indent=2) + "\n").encode()
+    dest = ROOT / "dist/release"
+    dest.mkdir(parents=True, exist_ok=True)
+    archive = dest / "sh3-r36s-30fps.zip"
+    temporary = archive.with_suffix(".zip.tmp")
+    timestamp = datetime.fromtimestamp(int(epoch), timezone.utc).timetuple()[:6]
+    with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as package:
+        for name, data in sorted(content.items()):
+            info = zipfile.ZipInfo(name, timestamp)
+            info.create_system = 3
+            executable = name.endswith((".sh", ".py")) or name == "sh3/runtime/sh3"
+            info.external_attr = (0o100755 if executable else 0o100644) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            package.writestr(info, data)
+    temporary.replace(archive)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (dest / "SHA256SUMS").write_text(digest + "  " + archive.name + "\n")
+    print("Release package:", archive.relative_to(ROOT))
 
 
 def main():
@@ -21,11 +92,13 @@ def main():
                         help="Bounded compiler comparison; O2 remains default")
     parser.add_argument("--lto", action="store_true",
                         help="Compare link-time optimization with two bounded compiler jobs")
+    parser.add_argument("--release", action="store_true",
+                        help="Build and ZIP player runtime without private diagnostic shader samples")
     args = parser.parse_args()
     check_ignores()
     cfg = config()
     game = Path(cfg.get("SH3_GAME_DIR") or ROOT / "SILENT HILL 3").expanduser().resolve()
-    validation = subprocess.run(["bash", "scripts/device/check-data.sh", str(game)],
+    validation = subprocess.run(["bash", "scripts/build/check-data.sh", str(game)],
                                 cwd=ROOT, capture_output=True, text=True)
     if validation.returncode:
         print(validation.stdout + validation.stderr, end="")
@@ -40,6 +113,7 @@ def main():
     (evidence / "build-inputs.json").write_text(json.dumps({
         "input_sha1": input_sha1, "input_size": len(source), "recipe_sha256": recipe,
         "optimization": args.optimization, "lto": args.lto,
+        "diagnostic_shader_samples": not args.release,
     }, indent=2) + "\n")
     probe = subprocess.run(["docker", "image", "inspect", image], capture_output=True, text=True)
     if probe.returncode:
@@ -62,6 +136,7 @@ def main():
               if p and (p == "CMakeLists.txt" or p.startswith(("src/", "tools/", "assets/", "third_party/", "scripts/build/", "scripts/host/"))) and (ROOT / p).is_file()}
     identity = {"input_sha1": input_sha1, "input_size": len(source), "image_id": info["Id"],
                 "optimization": args.optimization, "lto": args.lto,
+                "diagnostic_shader_samples": not args.release,
                 "recipe_sha256": recipe, "source": inputs,
                 "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
     generation = {p: digest for p, digest in inputs.items()
@@ -105,6 +180,7 @@ def main():
                 "-e", "SH3_GENERATION_KEY=" + identity["generation_key"],
                 "-e", "SH3_OPTIMIZATION=" + args.optimization,
                 "-e", "SH3_LTO=" + ("1" if args.lto else "0"),
+                "-e", "SH3_DIAGNOSTIC_SAMPLES=" + ("0" if args.release else "1"),
                 "-e", "SH3_BUILD_JOBS=" + os.environ.get("SH3_BUILD_JOBS", "2"), image,
                 "bash", "scripts/build/native.sh"]
         # Failed/interrupted compilation can replace some cached objects. Only
@@ -133,6 +209,8 @@ def main():
         if dest.exists():
             dest.rename(dest.with_name("runtime-previous-" + evidence.name))
         shutil.copytree(package, dest)
+        if args.release:
+            package_release(dest, input_sha1, epoch, identity["base_commit"])
     print("Build status:", status, "Evidence:", evidence.relative_to(ROOT))
     return status
 

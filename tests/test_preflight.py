@@ -29,13 +29,13 @@ class LauncherFixture(unittest.TestCase):
             'pm_finish() { printf "frontend ready\\n"; }\n'
         )
 
-    def launch(self, **extra_env):
+    def launch(self, timeout=20, **extra_env):
         return subprocess.run(
             ["bash", str(REPO / "ports" / "Silent Hill 3.sh")],
             env={**os.environ, "SH3_PORT_ROOT": str(self.port),
                  "SH3_RUN_ID": "fixture", "SH3_PACKAGE_DIR": str(REPO),
                  "XDG_DATA_HOME": str(self.root / "xdg"), **extra_env},
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, timeout=timeout,
         )
 
 
@@ -315,6 +315,18 @@ class PreflightLauncherTests(LauncherFixture):
         self.assertNotIn("Unsupported sh3.exe", result.stderr)
         self.assertIn("Missing or empty required data: data/movie/op.000", result.stderr)
         self.assertEqual(original.read_bytes(), before)
+
+    @unittest.skipUnless((OWNER / "sh3.exe").is_file(), "requires owner CD executable")
+    def test_installed_runtime_rejects_another_recognized_input_profile(self):
+        (self.data / "sh3.exe").symlink_to(OWNER / "sh3.exe")
+        runtime = self.port / "runtime"
+        runtime.mkdir()
+        (runtime / "input.sha1").write_text("aa2aca6dba19bf510c9c2e92eefdc15e98266581\n")
+        result = self.launch(SH3_MODE="game")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("does not match this runtime", result.stdout + result.stderr)
+        self.assertIn("frontend ready", result.stdout)
+        self.assertEqual(self.save.read_bytes(), b"owner save remains unchanged")
 
     def test_missing_original_movie_is_reported_even_with_invalid_executable(self):
         (self.data / "sh3.exe").write_bytes(b"wrong build")

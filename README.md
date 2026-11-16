@@ -1,220 +1,110 @@
-<div align=center>
+# Silent Hill 3 — R36S port
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/logo.png">
-  <img src="docs/logo-dark.png" alt="Silent Hill 3" width="70%">
-</picture>
+Native Linux ARM64 port of the PC version of **Silent Hill 3** for R36S, maintained by [ktodorow](https://github.com/ktodorow). Built on [cutarev’s sh3-nx](https://github.com/cutarev/sh3-nx) and its recompiler, runtime and renderer foundations. Huge thanks to cutarev for making this project possible.
 
-</div>
-<h1 align=center>Silent Hill 3 — Nintendo Switch port</h1>
+> **No game files are included. You need your own copy of the PC game;** copy its supported `sh3.exe` and complete `data/` folder into `sh3/gamedata/` after installing the release ZIP.
+>
+> **Unofficial fan project.** I am not affiliated with, employed by, endorsed by, or otherwise involved with Konami. Silent Hill 3 and its trademarks belong to their respective owners.
 
-<p align=center><a href="https://discord.gg/H9yb3hSkvf"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?logo=discord&logoColor=white" alt="Discord"></a></p>
+## Current release and features
 
-<p align=center><b>v0.06</b></p>
+Download [R36S 30 FPS release](https://github.com/ktodorow/sh3-r36/releases/latest). Use the **`sh3-r36s-30fps.zip`** asset, not GitHub’s automatic source-code ZIP.
 
-A native Nintendo Switch port of the PC version of **Silent Hill 3**, made the same way as
-[sh2-nx](https://github.com/cutarev/sh2-nx).
+- **30 FPS locked profile:** gameplay capped at 30 FPS, **320×240 internal rendering scaled to 640×480 output**, with original 4:3 presentation. A cap is not a guarantee: demanding scenes, loading and first shader compilation can still cause drops. The 640×480 internal comparison mode remains in source; it is not the release profile.
+- **Native execution:** PC x86 code translated ahead of time to C and compiled for Linux AArch64. SDL2 handles input/audio; Direct3D 8 is translated to hardware OpenGL ES. No emulator or Wine required.
+- **Direct launch:** select **Silent Hill 3** in Ports to enter the game, without the port’s extra splash/options menu.
+- **R36S controls:** both sticks, digital triggers, button remapping, and Select+Start exit to frontend.
+- **Persistent saves/settings and shader caches:** stored under `sh3/state/`. Fresh installs include no progress saves or prebuilt shader caches.
+- **Quiet play:** diagnostic recording, frame capture and profiling off by default. Stock CPU/GPU/memory performance governors selected during play; previous policies restored on exit. Frequency limits are not raised.
 
-It's not an emulator. The game's x86 executable is statically recompiled to C ahead of time and the C is compiled
-for the Switch's ARM64 CPU. The Windows layer the game expects (Direct3D 8, DirectSound, DirectInput, kernel32...)
-is reimplemented on top of SDL2 and OpenGL.
+This is a **preview**, not a completed campaign certification. Original prerecorded FMVs are currently skipped; real-time cutscenes use the game renderer. First visits may stutter while shaders compile. Campaign-wide progression, sustained performance and all audio cases remain under development. The inherited Office Building bathroom black-screen issue may require pressing a button to continue.
 
-> [!NOTE]
-> No game files are included. You need your own copy of the PC game; the NRO from
-> [Releases](https://github.com/cutarev/sh3-nx/releases), or one you build yourself
-> ([Building the NRO](#building-the-nro)), runs it.
+## Requirements
 
-## Features
+- R36S with **64-bit dArkOS**, working PortMaster installation, firmware SDL2 and Mali GLES drivers, Python 3, systemd and passwordless `sudo` for the normal frontend user. This launcher was developed on dArkOS with kernel 4.4.189 and glibc 2.41. Other firmware and R36S clones have not been verified.
+- Approximately 5 GB for your installed PC game data, plus space for port, saves and caches.
+- Release executable profile: `sh3.exe`, **3,338,240 bytes**, SHA-1 **`d851669ef609b3164e3581aa8dcfbfaec866cb79`** (original-CD input used for this R36S build). A different executable must not be renamed or patched to bypass validation. Developers can build from either recognized input profile; see [developer guide](DEVELOPING.md).
 
-- **Native code**: every function of `sh3.exe` runs as ARM64 code; no emulator, no Wine.
-- **Launcher**: Play and Options before the game; Options changes the resolution and the game threads in `sh3.ini`
-  on the console.
-- **Widescreen**: 16:9 at 1280x720 by default, 1920x1080 for docked play, or the original 4:3
-  (ThirteenAG's WidescreenFix, ported). The camera widens in gameplay, cutscenes keep their framing without the
-  letterbox, and menus and HUD stay in a centered 4:3 area.
-- **Controller**: Nintendo's layout (A confirms, B cancels), remappable in Options > Button Config.
-- **Shader cache**: shaders are compiled once and kept on the SD card, so areas only stutter the first time.
-- Also builds for Linux (x86-64), which is where most of the debugging happens.
+Install/update [PortMaster](https://portmaster.games/installation.html) first. This ZIP uses PortMaster’s installed control/firmware helpers; it does not bundle PortMaster or claim an official catalogue submission.
 
-## v0.06
+## Install and run
 
-- **Launcher**: after a warning screen, Play and Options come before the game, with the game's own menu sounds.
-  Options sets the resolution (720p, 1080p or the original 4:3) and the game threads, and writes them to `sh3.ini`
-  (see [Settings](#settings)).
-- Pause menu: the black box behind it is gone, so the game stays visible behind the menu text.
-- Pause menu: Save and Load were greyed out when the game was paused during a fade-in (back from the save screen,
-  after a load or a door) until the menu was reopened.
-- Fixed large triangles drawn over the car windows in the cutscene after the Missionary fight
-  ([#6](https://github.com/cutarev/sh3-nx/pull/6), by [Ligux01](https://github.com/Ligux01)): where two paths
-  joined, the recompiler read the zero flag back from a register that had been overwritten since, so some
-  triangles got the wrong winding. It now uses the saved flag, with regression tests in the lifter.
+Both transfer methods produce this layout in your device’s Ports folder. On the tested two-card setup that folder is **`/roms2/ports/`**. On a single-card setup it may be `/roms/ports/`; use the folder your frontend actually scans.
 
-## v0.05
+```text
+ports/
+├── Silent Hill 3.sh              # launcher from release ZIP
+└── sh3/
+    ├── runtime/sh3               # native executable from release ZIP
+    ├── preflight/                # required launcher helpers from release ZIP
+    ├── gamedata/
+    │   ├── sh3.exe               # supply from your PC installation
+    │   └── data/                 # supply complete folder, including movies/sound
+    └── state/                   # created on first run; saves/settings/caches
+```
 
-- ZL and ZR swapped to match sh2-nx: ZL is the search view, ZR readies the weapon (see [Controls](#controls)).
+### SD-card transfer
 
-## v0.04
+1. Shut down the R36S and insert its games SD card into your computer. Open the `ports` folder on the games partition (often named EASYROMS).
+2. Extract `sh3-r36s-30fps.zip` **inside `ports`**. Place `Silent Hill 3.sh` and `sh3/` directly there, without an extra ZIP-name folder.
+3. From your installed PC game, copy `sh3.exe` and the **entire `data` folder** into `ports/sh3/gamedata/`. Keep lowercase filenames and folder structure. Do not create `gamedata/data/data/` or copy your whole installation one level too deep.
+4. Safely eject the card, return it to the R36S, and boot. Refresh the frontend’s game list if needed, then open **Ports → Silent Hill 3**.
 
-- Controls laid out as in sh2-nx: L / R strafe, ZL is the search view, ZR readies the weapon (see
-  [Controls](#controls)).
-- Fixed a crash breaking the white rubble wall with the silencer in the construction site (a callback that was
-  only partly recompiled; nine others like it fixed too).
+### FTP / SFTP transfer
 
-## v0.03
+1. Connect the R36S and computer to the same network. Enable the firmware’s remote/file-transfer service and find the device IP in its network settings.
+2. In FileZilla, WinSCP or another file-transfer client, connect using **your device’s configured credentials**. Prefer **SFTP, port 22**, when SSH is enabled. Choose FTP only if your firmware has an FTP server enabled, using that server’s configured port.
+3. Extract the release ZIP on your computer. Upload `Silent Hill 3.sh` and `sh3/` to `/roms2/ports/` (or your active Ports folder).
+4. Upload your PC `sh3.exe` and complete `data/` folder to `/roms2/ports/sh3/gamedata/`. Wait for all transfers to finish; partial game archives cannot run.
+5. Refresh the game list and select **Ports → Silent Hill 3** on the handheld.
 
-- Better crash logs: `sh3-crash.log` lists the last calls of the thread that crashed (they were mixed from every
-  thread), and with `log=1` in `sh3.ini`, `sh3.log` names any file the game fails to open.
-- Fixed a crash entering the area past the Hazel Street station stairs (a monster callback that was never
-  recompiled; another one like it fixed too).
+The archive includes executable permissions. If your transfer client removes them on a Linux-formatted card, enable Execute for `Silent Hill 3.sh` and `sh3/runtime/sh3` in its file-permissions dialog. FAT/exFAT permissions follow firmware mount settings.
 
-## v0.02
+On first launch, shader caches are built locally, so give the game time to start. For the personal play preset, use the game’s Options: **Lensflare Low, Shadows No, Noise Off, Display Normal, Blood Much, Low-health indicator Off**. Confirm changes in the game. The launcher enforces 320×240 internal / 640×480 output on every normal launch. Do not change rendering resolution expecting it to persist in this fixed profile.
 
-- Heather's hair in the real-time cutscenes was drawn as solid blocks
-  ([#1](https://github.com/cutarev/sh3-nx/issues/1)): the alpha of the game's paletted (P8) textures was dropped
-  when they were expanded for OpenGL. The palette's alpha is now honored, and palettes are handled as Direct3D 8
-  does (numbers up to 65535, a texture expanded again when its palette changes).
+### Saves, updates and troubleshooting
 
-## v0.01
-
-The first release: from the title screen into the game, with New Game, the opening, gameplay, the pause menu,
-inventory, options and Button Config.
-
-Known issues:
-
-- The FMVs (`data/movie/*.000`, played through DirectShow on PC) are skipped.
-- After the cutscene in the Office Building bathroom the screen can stay black: press a button to continue.
-- The Konami and KCET logos and the credits are stretched on a wide screen.
-- Little tested past the first areas: if it crashes, `sh3-crash.log` next to the NRO says where (please attach it
-  to an issue).
-
-## How to install
-
-1. Install Silent Hill 3 on your PC. The port is built for the `sh3.exe` of 3,338,240 bytes, SHA-1
-   `aa2aca6dba19bf510c9c2e92eefdc15e98266581`.
-2. Copy to the SD card, with the card (or its folder) mounted on the PC:
-
-   ```sh
-   .venv/bin/python tools/make_sd.py /path/to/sd      # from a clone of this repository
-   ```
-
-   or by hand. Your `sh3-nx` folder should look like this:
-
-   ```text
-   /switch/sh3-nx/
-     sh3-nx.nro       (from Releases)
-     sh3.exe          (from your PC install)
-     data/            (from your PC install, about 5 GB)
-     savedata/        (an empty folder: saves and settings go here)
-     sh3.ini          (optional, see Settings)
-   ```
-
-3. Launch it from the homebrew menu in **title takeover** mode (hold **R** while starting an installed game). Not
-   from the album: applet mode does not give homebrew enough memory.
-
-Saves, settings and the shader cache are written next to the NRO.
-
-> [!CAUTION]
-> The first time you enter an area its shaders are compiled, so **it can stutter for a moment**. They are kept in
-> `sh3-progs.bin` and later visits are smooth.
+- Exit with **Select+Start** and wait for frontend to return before powering off. Back up `sh3/state/` to preserve progress and settings.
+- When updating, replace launcher/runtime/helpers from the new ZIP; keep your `gamedata/` and `state/` folders. The ZIP contains no save files to overwrite yours.
+- Immediate return to Ports usually means a missing/mismatched executable, incomplete `data/`, unsupported firmware, missing PortMaster, or lost executable permissions. Check layout and hash above first. Never delete your saves to fix an installation error.
+- Normal play writes no diagnostic logs. For an explicit troubleshooting run, change `SH3_DIAGNOSTICS` default from `0` to `1` in `Silent Hill 3.sh`, reproduce once, then restore `0`. Run evidence is written under `sh3/runs/`; review it before sharing. Research branch contains additional tools for developers.
 
 ## Controls
 
-<div align="center">
+Defaults below use **physical R36S labels**, with A on the right, B below, X above and Y on the left. Firmware button swaps or a saved custom mapping can change these.
 
-| Switch | Xbox (PC) | Action |
-| --- | --- | --- |
-| A | A | Action, confirm |
-| B | B | Flashlight, cancel |
-| Y | X | Dash |
-| X | Y | Map |
-| L / R | LB / RB | Strafe left / right |
-| ZL | LT | Search view |
-| ZR | RT | Ready weapon |
-| + | Start | Inventory |
-| − | Back | Pause, skip |
-| Left stick, d-pad | Left stick, d-pad | Move |
-| Right stick | Right stick | Camera |
-| L stick click | LS | Supplies |
-| R stick click | RS | Zoom |
-
-</div>
-
-Laid out as in sh2-nx; change them in Options > Button Config. A `savedata/key.ini` saved by an older version keeps
-its old layout: delete it to get this one. With a keyboard on PC: W A S D and Q E
-to move and turn, Space for action, Return / Escape to confirm / cancel.
-
-## Settings
-
-`sh3.ini`, next to the NRO (every line is optional); the launcher's Options screen sets `resolution` and `cores`:
-
-| Setting | Effect |
+| R36S control | Action |
 | --- | --- |
-| `resolution=1280x720` | the default; `1920x1080` for docked play, `960x720` or `640x480` for the original 4:3 |
-| `cores=1` | every game thread on one core, a fallback if the audio misbehaves |
-| `log=1` | write `sh3.log` next to the NRO, for bug reports (off by default: it costs an SD card write per line). Crashes always go to `sh3-crash.log` |
-| `trace=1` | with `log=1`, log every Windows call the game makes (very slow) |
+| A | Action / confirm; attack while holding R2 |
+| B | Flashlight / cancel |
+| X | Dash |
+| Y | Map |
+| L1 / R1 | Strafe left / right |
+| L2 | Search view |
+| R2 | Ready weapon |
+| Start | Inventory |
+| Select | Pause / skip where supported |
+| Select + Start | Exit game and return to frontend |
+| Left stick / d-pad | Move / navigate menus |
+| Right stick | Camera |
+| L3 / R3 | Supplies / zoom |
 
-## Building the NRO
+Remap game actions in **Options → Button Config**. Mapping persists in `sh3/state/savedata/key.ini`; preserve it when updating.
 
-You need the game (step 1 of [How to install](#how-to-install)): the code generator reads `sh3.exe`, applies the
-widescreen patches to it and recompiles it.
+## Development and branches
 
-Requirements: Python 3, CMake, Ninja, and for the Switch build podman (or a local devkitPro install with devkitA64,
-libnx, switch-sdl2 and switch-mesa). For the Linux build, the SDL2 development files.
+[Developer guide](DEVELOPING.md) covers native ARM64 Docker builds and packaging.
 
-```sh
-git clone https://github.com/cutarev/sh3-nx && cd sh3-nx
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-ln -s "/path/to/Silent Hill 3" game     # the folder holding sh3.exe and data/
-tools/regen.sh                          # recompiles game/sh3.exe into src/recomp/gen (~5 min)
-
-tools/build-switch.sh                   # -> build/switch/sh3-nx.nro (devkitPro's container under podman)
-tools/build-switch-local.sh             # the same with a local devkitPro install
-
-cmake -S . -B build/linux -G Ninja && cmake --build build/linux    # Linux build
-build/linux/sh3 game
-```
-
-## How it works
-
-- **The game's code is translated, not emulated.** `tools/regen.sh` wraps the PE as an XBE for
-  [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) (patched for these ports), which turns every function into C.
-  `tools/seeds.py` finds the functions only data refers to, `tools/fix_functions.py` repairs the ones the
-  disassembler cut short, and `tools/observed_seeds.txt` lists those found at run time.
-- **Widescreen.** ThirteenAG's fix patches the running game; here its code changes are byte patches applied to the
-  exe before recompiling (`tools/patch_exe.py`, each site checked against the original bytes) and hand-written
-  functions in `src/game/sh3.c`.
-- **The Windows layer.** Direct3D 8 runs on OpenGL with the shaders translated to GLSL (`src/d3d8`), DirectSound is
-  a software mixer on SDL audio, DirectInput goes through SDL, and kernel32, user32 and winmm are in `src/win32`.
-  `src/runtime` holds the guest memory, threads and the Linux/Horizon layer.
-
-## Debugging aids (Linux)
-
-| Variable | Effect |
-| --- | --- |
-| `SH3_KEYS="22:Return,30:Down+2"` | scripted key presses (seconds, key, optional hold); the window is hidden and the real keyboard ignored |
-| `SH3_SHOW=1` | keep the window visible during a scripted run |
-| `SH3_SHOT=dir`, `SH3_SHOT_EVERY=n` | dump frames as PPM (`tools/ppm2png.py`) |
-| `SH3_STATS=1` | frame rate and guest heap |
-| `SH3_TRACE=1` | log every bridged Windows call |
-| `SH3_PEEK=va,...` / `SH3_POKE=frame:va=value` | log guest dwords every 60 frames / write one |
-| `SH3_COVER=frame` / `-frame` | with a tracing build (`TRACE=$PWD/build/disasm/functions.json tools/regen.sh --recomp-only`), log the functions that run after that frame |
-| `SH3_ORACLE=va,n` | differential test of one function against Unicorn (`tools/oracle.py`) |
-
-A build with `-DRECOMP_ABI_CHECK` logs every call that returns with `esp`, `ebx`, `esi` or `edi` changed, on the
-Switch too (`log=1`). `tools/fuzz.py` checks the lifter's instruction semantics against Unicorn.
+- **[dev](https://github.com/ktodorow/sh3-r36/tree/dev):** source, required build dependencies, Docker recipe, release packaging and runtime helpers.
+- **[research](https://github.com/ktodorow/sh3-r36/tree/research):** same R36S baseline plus project specs, reports, research, tests, device probes and saved host/device workflows. Private game data, credentials and raw device dumps remain local.
 
 ## Credits
 
-- **Konami and Team Silent**: creators of Silent Hill 3. This is an unofficial, fan-made port with no affiliation.
-- **[WidescreenFixesPack](https://github.com/ThirteenAG/WidescreenFixesPack)** by ThirteenAG (MIT): the widescreen
-  fix.
-- **[sh2-nx](https://github.com/cutarev/sh2-nx)**: the runtime this port starts from.
-- **[xboxrecomp](https://github.com/sp00nznet/xboxrecomp)** by sp00nznet: the x86 to C lifter.
-- **nfsmw-nx**, the Need for Speed: Most Wanted Switch port, for the Horizon guest-memory technique.
-- **[devkitPro](https://devkitpro.org) and [switchbrew](https://github.com/switchbrew/libnx)**, SDL2, Mesa.
+- **[cutarev](https://github.com/cutarev)** — original [sh3-nx](https://github.com/cutarev/sh3-nx) author. Recompiler integration, Windows compatibility layer, renderer and game fixes provided the foundation for this R36S port; also created [sh2-nx](https://github.com/cutarev/sh2-nx).
+- **[PortMaster](https://portmaster.games/)** team and contributors — handheld port ecosystem, controller/firmware helpers, packaging guidance and working port examples. Thanks to the Cuphead and Delver port contributors for useful launcher and diagnostic patterns.
+- **[sp00nznet](https://github.com/sp00nznet/xboxrecomp)** — xboxrecomp x86-to-C lifter; **[ThirteenAG](https://github.com/ThirteenAG/WidescreenFixesPack)** — widescreen fixes adapted by upstream; **[Ligux01](https://github.com/Ligux01)** — upstream recompiler flag fix.
+- **SDL2, Mesa, Linux, Debian, dArkOS and their contributors** — platform, input, audio, graphics and build foundations.
+- **Konami and Team Silent** — original game and creative work. All original game rights remain with their owners.
+- **Everyone who contributed code, testing, bug reports and porting knowledge**, including upstream contributors retained in Git history. R36S adaptation and maintenance by **ktodorow**.
 
-## Legal
-
-Silent Hill is a trademark of Konami. This project is not affiliated with Konami. This repository contains no assets
-or program code from the original game; users must provide their own copy. Running homebrew requires custom firmware.
+See [CREDITS.md](CREDITS.md) for dependency notices. This fan project is not endorsed by Konami or PortMaster.

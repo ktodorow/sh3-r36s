@@ -1,13 +1,24 @@
 #!/bin/bash
 # SH3 project game menu; native Linux ARM64, persistent player state.
 export SH3_MODE=game
-export SH3_STATS=${SH3_STATS:-1}
+export SH3_DIAGNOSTICS=${SH3_DIAGNOSTICS:-1}
+if [ "$SH3_DIAGNOSTICS" = 1 ]; then export SH3_STATS=${SH3_STATS:-1}; fi
 export SH3_PORT_ROOT=${SH3_PORT_ROOT:-"$(cd "$(dirname "$0")" && pwd)/sh3"}
 export SH3_RUN_ID=${SH3_RUN_ID:-"$(date -u +%Y%m%dT%H%M%SZ)-$$"}
 case "$SH3_RUN_ID" in ''|*[!A-Za-z0-9_-]*) echo 'Invalid run ID' >&2; exit 3 ;; esac
-SERVICE_DIR="$SH3_PORT_ROOT/runs/${SH3_RUN_ID}-service"
-mkdir -p "$SH3_PORT_ROOT/runs" || exit 3
-mkdir "$SERVICE_DIR" || { echo 'Service run already exists; preserving evidence.' >&2; exit 3; }
+if [ "$SH3_DIAGNOSTICS" = 0 ]; then
+    export SH3_CONTROL_DIR
+    SH3_CONTROL_DIR=$(mktemp -d "/tmp/sh3-r36s-$(id -u)-${SH3_RUN_ID}.XXXXXX") || exit 3
+    SERVICE_DIR=$SH3_CONTROL_DIR
+    exec >/dev/null 2>&1
+    output=(--property=StandardOutput=null --property=StandardError=null)
+else
+    SERVICE_DIR="$SH3_PORT_ROOT/runs/${SH3_RUN_ID}-service"
+    mkdir -p "$SH3_PORT_ROOT/runs" || exit 3
+    mkdir "$SERVICE_DIR" || { echo 'Service run already exists; preserving evidence.' >&2; exit 3; }
+    output=("--property=StandardOutput=append:$SERVICE_DIR/stdout.txt"
+            "--property=StandardError=append:$SERVICE_DIR/stderr.txt")
+fi
 run_limits=()
 if [ "${SH3_PHYSICAL_CONTROLS:-0}" = 1 ]; then
     export SH3_INPUT_LOG=1 SH3_GL_BACKEND=gles SH3_SHOW=1 SH3_QUIT_AFTER=900
@@ -31,9 +42,12 @@ for name in HOME USER LOGNAME SHELL PATH LANG TERM XDG_DATA_HOME XDG_RUNTIME_DIR
     DBUS_SESSION_BUS_ADDRESS SDL_GAMECONTROLLERCONFIG_FILE DEVICE param_device HOTKEY \
     ANALOGSTICKS SDL_KMSDRM_DEVICE_INDEX SDL_KMSDRM_ORIENTATION SDL_KMSDRM_ROTATION \
     SH3_PORT_ROOT SH3_RUN_ID SH3_MODE SH3_DATA_DIR SH3_PACKAGE_DIR SH3_PREFLIGHT_HEADLESS \
+    SH3_DIAGNOSTICS SH3_CONTROL_DIR SH3_QUIET SH3_DIRECT_PLAY \
     SH3_KEYS SH3_STATS SH3_GL_BACKEND SH3_SHOW SH3_QUIT_AFTER SH3_PRESENT_DUMP \
     SH3_SEED_SESSION SH3_SESSION_ISOLATED SH3_IMPORT_SESSION SH3_INTERNAL_RESOLUTION SH3_PEEK SH3_INPUT_LOG \
-    SH3_SHOT SH3_SHOT_EVERY SH3_MONITOR SH3_PROFILE SH3_GPU_PROFILE SH3_FPS_LIMIT; do
+    SH3_SHOT SH3_SHOT_EVERY SH3_MONITOR SH3_PROFILE SH3_GPU_PROFILE SH3_FPS_LIMIT \
+    SH3_PERFORMANCE_GOVERNORS SH3_SYSFS_ROOT SH3_SWAP_INTERVAL SH3_GPU_COUNTER_PAYLOAD \
+    SH3_GL_TRACE SH3_GL_DRAIN SH3_GL_TRACE_COARSE; do
     if [ "${!name+x}" ]; then environment+=("--setenv=$name=${!name}"); fi
 done
 wait_options=()
@@ -42,8 +56,7 @@ if [ "${SH3_SERVICE_WAIT:-0}" = 1 ]; then wait_options=(--wait); fi
 "${privilege[@]}" systemd-run --unit=sh3-r36s-game --collect --property=Type=exec \
     --uid="$(id -u)" --gid="$(id -g)" --property="SupplementaryGroups=$(id -Gn)" \
     --property=KillMode=control-group --property=TimeoutStopSec=40 \
-    --property="StandardOutput=append:$SERVICE_DIR/stdout.txt" \
-    --property="StandardError=append:$SERVICE_DIR/stderr.txt" \
+    "${output[@]}" \
     --property="ExecStopPost=+/bin/bash \"$SH3_PORT_ROOT/preflight/ports/restore-frontend.sh\" \"$SH3_PORT_ROOT\" \"$SH3_RUN_ID\"" \
     "${wait_options[@]}" "${run_limits[@]}" "${environment[@]}" \
     /bin/bash "$SH3_PORT_ROOT/preflight/ports/game-session.sh"

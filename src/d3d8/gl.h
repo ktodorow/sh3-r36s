@@ -1,10 +1,9 @@
-/* OpenGL 4.5 core entry points, loaded through SDL (the same on Linux and on the Switch's mesa). */
+/* OpenGL/GLES entry points loaded through SDL on Linux. */
 #pragma once
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_opengl.h>
 
-/* GL 1.x entry points are typed from SDL_opengl.h's prototypes and loaded like the rest: the Switch
- * has no libGL to link them from. */
+/* GL 1.x entry points use SDL_opengl.h prototypes and are loaded with the rest. */
 #define GL_FUNCS(X) \
     X(__typeof__(&glBindTexture), glBindTexture) \
     X(__typeof__(&glClear), glClear) \

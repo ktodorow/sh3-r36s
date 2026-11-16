@@ -4,10 +4,6 @@
 #include <pthread.h>
 #include <unistd.h>
 #include "host.h"
-#ifdef __SWITCH__
-#include <switch.h>
-#include <netinet/in.h>  /* __nxlink_host */
-#endif
 
 /* ---- register file and runtime globals the generated code links against ---- */
 #ifndef RECOMP_MMX_DEFINED  /* recomp_types.h only declares it for generated code */
@@ -32,32 +28,15 @@ RECOMP_TLS volatile uint64_t g_icall_count;
 int rt_trace;
 char rt_game_dir[512] = ".";
 
-#ifdef __SWITCH__
-/* Off unless launched by nxlink or asked for with log=1 in sh3.ini: writing sh3.log costs an SD card write
- * per line (crashes still go to sh3-crash.log). */
-static int log_on;
-#endif
+static int log_on = 1;
 
 void rt_log(const char *fmt, ...) {
-#ifdef __SWITCH__
     if (!log_on) return;
-#endif
     va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
     fputc('\n', stderr);
-#ifdef __SWITCH__
-    static FILE *log;  /* no console on the Switch: sh3.log in the game folder */
-    if (!log) log = fopen("sh3.log", "w");
-    if (log) {
-        va_start(ap, fmt);
-        vfprintf(log, fmt, ap);
-        va_end(ap);
-        fputc('\n', log);
-        fflush(log);
-    }
-#endif
 }
 
 static void dump_icall_trace(FILE *f) {
@@ -85,8 +64,9 @@ void rt_dump_thread(void) {
     host_backtrace(2);
 }
 
-/* Fatal errors go to stderr and to sh3-crash.log in the game folder (the Switch has no console). */
+/* Diagnostic fatal errors go to stderr and sh3-crash.log in the state folder. */
 _Noreturn void rt_fatal(const char *fmt, ...) {
+    if (!log_on) _exit(1);
     char msg[512];
     va_list ap;
     va_start(ap, fmt);
@@ -118,14 +98,13 @@ static void on_crash(uintptr_t a) {
 #define HOSTFN_BASE 0xFE000000u      /* synthetic call targets, never dereferenced */
 #define HOSTFN_STRIDE 16u
 
-/* Only the exe image and the heap are backed; anything else the guest touches faults, on Linux
- * as on the Switch. */
+/* Only the exe image and heap are backed; other guest accesses fault. */
 static void arena_init(void) { g_xbox_mem_offset = (ptrdiff_t)host_arena_reserve(); }
 static uint32_t image_lo, image_hi;  /* the loaded exe */
 
 /* ---- guest heap ----
  * ponytail: power-of-two size classes with per-class free lists, never returned to the
- * system. Wastes up to half of each block; swap for a real allocator if Switch RAM runs out. */
+ * system. Size-class rounding can waste up to half of each block. */
 typedef struct { uint32_t cls, req, magic, pad; } BlockHdr;
 #define BLOCK_MAGIC 0x53483248u
 static uint32_t heap_top = HEAP_LO, heap_committed = HEAP_LO, free_head[33];
@@ -458,8 +437,8 @@ extern void xbe_entry_point(void);
 void game_init(void);  /* src/game/sh3.c */
 void launcher_run(void);  /* src/d3d8/launcher.c */
 
-/* sh3.ini in the game folder: resolution=WxH (default 1280x720), cores=1 to keep the guest threads on one
- * core, trace=1 to log every bridged call, log=1 to write sh3.log on the Switch. */
+/* sh3.ini in the state folder: resolution=WxH; trace=1 logs bridged calls.
+ * Handheld launchers supply the R36S resolution profile. */
 uint32_t rt_res_w = 1280, rt_res_h = 720;
 static void read_ini(void) {
     FILE *ini = fopen("sh3.ini", "r");
@@ -470,11 +449,9 @@ static void read_ini(void) {
             rt_res_w = a, rt_res_h = b;
         if (sscanf(line, " cores = %u", &a) == 1) cores = a;
         if (sscanf(line, " trace = %u", &a) == 1) rt_trace = a;
-#ifdef __SWITCH__
-        if (sscanf(line, " log = %u", &a) == 1) log_on = a;
-#endif
     }
     if (ini) fclose(ini);
+    if (!log_on) rt_trace = 0;
     host_use_single_core(cores >= 3 ? -1 : 0);
 }
 
@@ -499,15 +476,8 @@ static void game_thread(void *unused) {
 }
 
 int main(int argc, char **argv) {
-#ifdef __SWITCH__
-    const char *dir = "sdmc:/switch/sh3-nx";
-    (void)argc; (void)argv;
-    if (__nxlink_host.s_addr) {  /* launched by nxlink: stdout/stderr and the log go back to the PC */
-        socketInitializeDefault();
-        if (nxlinkStdio() >= 0) log_on = 1;
-        else socketExit();
-    }
-#else
+    const char *quiet = getenv("SH3_QUIET");
+    log_on = !quiet || strcmp(quiet, "1");
     if (argc == 2 && !strcmp(argv[1], "--gles-diagnostics")) {
         extern int rt_gles_diagnostics(void);
         host_crash_handlers(on_crash);
@@ -521,7 +491,30 @@ int main(int argc, char **argv) {
         return rt_runtime_diagnostics();
     }
     const char *dir = argc > 1 ? argv[1] : getenv("SH3_DIR");
-#endif
+    const char *swap_interval = getenv("SH3_SWAP_INTERVAL");
+    const char *profile = getenv("SH3_PROFILE");
+    const char *gl_trace = getenv("SH3_GL_TRACE");
+    const char *gl_drain = getenv("SH3_GL_DRAIN");
+    const char *gl_trace_coarse = getenv("SH3_GL_TRACE_COARSE");
+    if (gl_trace_coarse && ((!profile || !*profile) || !gl_trace || strcmp(gl_trace, "1") ||
+                            strcmp(gl_trace_coarse, "1"))) {
+        rt_log("SH3_GL_TRACE_COARSE requires SH3_PROFILE, SH3_GL_TRACE=1 and value 1");
+        return 2;
+    }
+    if (gl_drain && ((!profile || !*profile) || !gl_trace || strcmp(gl_trace, "1") ||
+                     strcmp(gl_drain, "1"))) {
+        rt_log("SH3_GL_DRAIN requires SH3_PROFILE, SH3_GL_TRACE=1 and value 1");
+        return 2;
+    }
+    if (gl_trace && ((!profile || !*profile) || strcmp(gl_trace, "1"))) {
+        rt_log("SH3_GL_TRACE requires SH3_PROFILE and value 1");
+        return 2;
+    }
+    if (swap_interval && ((!profile || !*profile) ||
+                         (strcmp(swap_interval, "0") && strcmp(swap_interval, "1")))) {
+        rt_log("SH3_SWAP_INTERVAL requires SH3_PROFILE and value 0 or 1");
+        return 2;
+    }
     if (dir) snprintf(rt_game_dir, sizeof rt_game_dir, "%s", dir);
     if (chdir(rt_game_dir)) rt_fatal("cannot enter %s", rt_game_dir);
     rt_trace = getenv("SH3_TRACE") != NULL;

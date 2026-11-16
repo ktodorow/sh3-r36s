@@ -4,10 +4,15 @@ PORT_ROOT=${SH3_PORT_ROOT:-"$(cd "$(dirname "$0")" && pwd)/sh3"}
 DATA_DIR=${SH3_DATA_DIR:-"$PORT_ROOT/gamedata"}
 RUN_ID=${SH3_RUN_ID:-"$(date -u +%Y%m%dT%H%M%SZ)-$$"}
 case "$RUN_ID" in ''|*[!A-Za-z0-9_-]*) echo 'Invalid run ID' >&2; exit 3 ;; esac
-RUN_DIR="$PORT_ROOT/runs/$RUN_ID"
-mkdir -p "$PORT_ROOT/runs" || exit 3
-mkdir "$RUN_DIR" || { echo 'Run already exists or is unwritable; preserving evidence.' >&2; exit 3; }
-printf '%s\n' "$RUN_ID" > "$RUN_DIR/run-id.txt"
+if [ "${SH3_DIAGNOSTICS:-1}" = 0 ]; then
+    RUN_DIR="$SH3_CONTROL_DIR/launch"
+    mkdir "$RUN_DIR" || exit 3
+else
+    RUN_DIR="$PORT_ROOT/runs/$RUN_ID"
+    mkdir -p "$PORT_ROOT/runs" || exit 3
+    mkdir "$RUN_DIR" || { echo 'Run already exists or is unwritable; preserving evidence.' >&2; exit 3; }
+    printf '%s\n' "$RUN_ID" > "$RUN_DIR/run-id.txt"
+fi
 main() {
     XDG_DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
     unset controlfolder
@@ -64,7 +69,11 @@ main() {
         timeout 30s "$PORT_ROOT/runtime/sh3" "--$SH3_MODE"
         return $?
     fi
-    bash "${SH3_PACKAGE_DIR:-$PORT_ROOT/preflight}/scripts/device/check-data.sh" "$DATA_DIR" \
+    local expected_input=''
+    if [ -f "$PORT_ROOT/runtime/input.sha1" ]; then
+        expected_input=$(cat "$PORT_ROOT/runtime/input.sha1")
+    fi
+    bash "${SH3_PACKAGE_DIR:-$PORT_ROOT/preflight}/scripts/build/check-data.sh" "$DATA_DIR" "$expected_input" \
         2> "$RUN_DIR/data.stderr.txt"
     local status=$?
     cat "$RUN_DIR/data.stderr.txt" >&2
@@ -176,7 +185,7 @@ main() {
         cd "$session" || return 3
         "$PORT_ROOT/runtime/sh3" "$session"
         status=$?
-        if [ "$session" != "$RUN_DIR/session" ]; then
+        if [ "${SH3_DIAGNOSTICS:-1}" = 1 ] && [ "$session" != "$RUN_DIR/session" ]; then
             mkdir "$RUN_DIR/session" || return 3
             for name in savedata sh3.ini sh3-progs.bin sh3-gl-cache.bin sh3-crash.log; do
                 if [ -e "$session/$name" ]; then
@@ -188,6 +197,10 @@ main() {
     fi
     return "$status"
 }
+if [ "${SH3_DIAGNOSTICS:-1}" = 0 ]; then
+    ( main ) >/dev/null 2>&1
+    exit $?
+fi
 ( main ) > "$RUN_DIR/stdout.txt" 2> "$RUN_DIR/stderr.txt"
 status=$?
 printf '%s\n' "$status" > "$RUN_DIR/exit-status.txt"

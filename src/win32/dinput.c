@@ -165,7 +165,7 @@ METHOD(dev_SetEventNotification, 2) { return 0; }
 METHOD(dev_SetCooperativeLevel, 3) { return 0; }
 METHOD(dev_GetDeviceInfo, 2) { fill_instance(ARG(1), DEV_KIND(THIS)); return 0; }
 METHOD(dev_Poll, 1) { return 0; }
-/* ---- force feedback: every DirectInput effect becomes a rumble of the pad (Switch HD rumble via SDL) ----
+/* ---- force feedback: every DirectInput effect becomes a rumble of the pad (through SDL) ----
  * An effect object keeps its GUID Data1, magnitude (0..10000 after gain) and duration (microseconds). */
 #define EFF_GUID(o) MEM32((o) + 4)
 #define EFF_MAG(o) MEM32((o) + 8)
@@ -336,7 +336,7 @@ static uint32_t axis(uint32_t dev, int v) {  /* SDL -32768..32767 to the range t
 
 /* The pad as DirectInput objects, numbered like SH2EE's Xidi on PC (StandardGamepad, face buttons
  * X A B Y): X/Y the left stick, Z/Rz the right one, a hat, and 12 buttons
- * X A B Y LB RB LT RT Back Start LS RS. SDL names buttons by position (Xbox layout), on the Switch too. */
+ * X A B Y LB RB LT RT Back Start LS RS. SDL bindings come from PortMaster controller mappings. */
 enum { OBJ_AXIS, OBJ_BUTTON, OBJ_POV };
 static const uint32_t axis_guid[4] = {0xA36D02E0u, 0xA36D02E1u, 0xA36D02E2u, 0xA36D02E3u};  /* X Y Z Rz */
 
@@ -349,11 +349,7 @@ static int32_t pad_axis(SDL_GameController *c, uint32_t dev, int i) {
 static int pad_button(SDL_GameController *c, int i) {
     static const SDL_GameControllerButton bt[12] = {
         SDL_CONTROLLER_BUTTON_X,
-#ifdef __SWITCH__  /* Nintendo's way round: action on A (east), cancel on B (south) */
-        SDL_CONTROLLER_BUTTON_B, SDL_CONTROLLER_BUTTON_A,
-#else
         SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_B,
-#endif
         SDL_CONTROLLER_BUTTON_Y,
         SDL_CONTROLLER_BUTTON_LEFTSHOULDER, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 0, 0, SDL_CONTROLLER_BUTTON_BACK,
         SDL_CONTROLLER_BUTTON_START, SDL_CONTROLLER_BUTTON_LEFTSTICK, SDL_CONTROLLER_BUTTON_RIGHTSTICK};

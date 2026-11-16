@@ -1,13 +1,61 @@
 # SH3 host/device workflow
 
 Selected personal-port folder: `/roms2/ports/sh3`, from local `R36S_PORT=sh3`.
-Menu entries: `/roms2/ports/Silent Hill 3 Preflight.sh` and
+Personal play menu: `/roms2/ports/Silent Hill 3.sh`, shown as **Silent Hill 3**.
+Play preparation below removes old diagnostic entries. Research deployments can
+still install `/roms2/ports/Silent Hill 3 Preflight.sh` and
 `/roms2/ports/Silent Hill 3 Runtime Diagnostics.sh`, plus
 `/roms2/ports/Silent Hill 3 Graphics Diagnostics.sh`. Preflight checks data;
 runtime diagnostics exercise native memory, threads, signals and timers without
 rendering. Game entry uses separate `sh3-r36s-game.service`, stops
 `emulationstation.service` while game runs, then restores it. Diagnostics leave
-frontend running. No runtime mounts, package installs, clock or firmware changes.
+frontend running. No runtime mounts, package installs or firmware changes.
+Personal play selects advertised CPU/GPU/DMC performance governors at unchanged
+stock limits, then restores prior policy on exit. Research entries retain their
+documented defaults.
+
+## Personal play preparation
+
+User-authorized SH3-only reset uses saved maintenance script; stdout/stderr/status
+stream directly into host `r36s-dumps/sh3/<UTC-run-id>/`. Inspection lists root
+without recursively walking old diagnostics. Original assets never deploy here.
+
+```sh
+python3 scripts/host/r36s.py inventory --play-action inspect --hash-data
+python3 scripts/host/r36s.py inventory --play-action install --runtime-package dist/runtime --play-settings .port-cache/play-ready/options-v2/player-options/settings/data.sys --reviewed-helpers r36s-dumps/sh3/20261115T154933591873Z-6a4eec
+python3 scripts/host/r36s.py inventory --play-action verify
+```
+
+Install validates checksums, AArch64 ELF, owner executable and reviewed firmware
+helpers before cleanup. Requires existing project ownership markers. Removes SH3
+progress slots, old system save, `runs/`, known game logs, old five SH3 menus and
+project preflight diagnostics. Preserves game assets, player controls, shader
+caches, private runtime libraries and other ports. Refuses active game, foreign
+menus or selected symlinks. Installs only native binary and required launch,
+recovery, power-policy and data-validation helpers. Unique staging directory is
+removed after success. Partial failures retain stage for diagnosis.
+Frontend metadata replaces only owned SH3 entries with `Silent Hill 3`, after
+stopping frontend so its cached old names cannot overwrite change; restarts it.
+
+Fresh `data.sys` comes from original game's Options screen, with no game progress:
+Blood Much, Noise Off, Display Normal, Low Health Indicator Off. `disp.ini` selects
+320×240 internal, 640×480 output, Lensflare Low and Shadows No. Fog/flashlight stay
+enabled. Main menu bypasses upstream splash and Play/Options launcher.
+
+Normal play disables native logging, counters, profiling, input traces, scripted
+movement, screenshots and deadlines. Recovery markers use private temporary RAM
+directory, removed on successful return. Essential clock ownership journal exists
+only during session; preserves recovery after killed process. No persistent run
+logs or snapshots. Warm shader caches and future player saves remain enabled.
+Explicit `SH3_DIAGNOSTICS=1 bash '/roms2/ports/Silent Hill 3.sh'` enables optional
+native/service recording; menu defaults off. Full profiler utilities can be
+redeployed from research workflows if needed.
+
+Verification launches actual quiet entry, observes one native process externally,
+reads live recognized guest settings once, then stops service and checks frontend,
+power restoration and absence of diagnostics/progress. Observer runs only during
+verification. Original FMV playback remains unfinished; bypass does not implement
+missing intro video.
 
 ## Private configuration
 
@@ -55,6 +103,9 @@ Target identity does not prove active SDL backend, GLES operations or gameplay.
 Inventory also records installed `perf` version and unprivileged software-event
 permission probe. Missing profiler or rejected event stays explicit; no tool
 installation or kernel permission change occurs.
+Read-only `power-policy.txt` records advertised CPU/GPU/DMC governors/frequencies,
+current min/max limits and thermal values. `power-owners/` preserves installed
+frontend launch config and policy helper source for review without executing it.
 
 Task #5 uses owner-copied `/roms2/ports/sh3/gamedata/sh3.exe` and complete
 `gamedata/data/`, then fresh inventory and preflight before game execution.
@@ -134,6 +185,10 @@ Linux ARM64 inside pinned reusable Docker environment. Read
 Run build and deployment serially. Build snapshots allowlisted source without
 private configuration; only selected executable mounts read-only. Each build
 retains logs, status, hashes and package under `.port-cache/builds/<UTC-id>/`.
+Use `--runtime-package .port-cache/builds/<UTC-id>/artifacts/runtime` on saved
+native workflow to freeze exact retained package across paired experiments while
+later builds change `dist/runtime/`. Same ELF/input/dependency/manifest checks apply;
+default remains `dist/runtime/`. Payload preserves selected executable and manifest.
 Verified generation cache reuses only matching input/generator/image and matching
 generated file hashes. Previous final packages remain under `dist/runtime-previous-*`.
 Debug symbols stay host-only; device receives stripped AArch64 binary.
@@ -339,7 +394,7 @@ for100 seconds without movement or screenshots. Use same collected seed and
 reviewed inventory for both; keep handheld controls untouched. Example:
 
 ```sh
-python3 scripts/host/r36s.py game --scene profile-static-640 --seed-session r36s-dumps/sh3/<inventory>/device/previous-launches/<run>/session --reviewed-helpers r36s-dumps/sh3/<reviewed-inventory>
+python3 scripts/host/r36s.py game --scene profile-static-640 --seed-session r36s-dumps/sh3/<completed-game-run>/launcher/session --reviewed-helpers r36s-dumps/sh3/<reviewed-inventory>
 ```
 
 Plan's opt-in `profile: true` sets `SH3_PROFILE` to new launch's `frame-times.csv`;
@@ -402,6 +457,30 @@ not established whole-frame GPU time. Enabling queries coincides with20.60FPS
 versus21.76FPS without them in same stationary640 checkpoint; keep queries off
 for acceptance cadence measurements.
 
+Saved scenes `profile-gpu-off-640` and `profile-gpu-on-640` isolate timer-query
+observer effects on current binary. Both run100s at640×480 internal/output,
+30FPS cap, fixed room210 camera, identical Load inputs and read-only observations,
+no captures. Boolean `gpu_profile` selects queries; omitted field defaults off,
+non-boolean values fail before game launch. Detached service already forwards
+`SH3_GPU_PROFILE`; each scene records exact plan/runtime/seed identities.
+Use same immutable warm seed with measured shadow/flare1/1 for all three runs:
+
+```sh
+python3 scripts/host/r36s.py game --scene profile-gpu-off-640 --seed-session <immutable-collected-session> --reviewed-helpers r36s-dumps/sh3/<fresh-reviewed-inventory>
+python3 scripts/host/r36s.py game --scene profile-gpu-on-640 --seed-session <immutable-collected-session> --reviewed-helpers r36s-dumps/sh3/<fresh-reviewed-inventory>
+python3 scripts/host/r36s.py game --scene profile-gpu-off-640 --seed-session <immutable-collected-session> --reviewed-helpers r36s-dumps/sh3/<fresh-reviewed-inventory>
+```
+
+Analyze55–95s room210; check exact pose/health, dimensions, settings, cache
+restores, source preservation, clocks/thermals and frontend recovery before
+comparing `.presents.csv` cadence, producer CPU/Present and worker swap times.
+On run must log actual counter width, final skip/disjoint totals and retain
+`.gpu.csv`; off runs must have no query report or enabled marker. Query region
+ends before actual SDL swap and can omit driver presentation/tiling costs.
+Off/on/off brackets short-term drift; one triplet cannot establish reproducible
+overhead percentage, full GPU coverage, or hardware performance ceiling.
+No executable rebuild, swap-interval change or global driver/cache reset required.
+
 For measured real-pad gameplay, use:
 
 ```sh
@@ -421,7 +500,62 @@ tie feedback to measured cadence. Existing Select+Start return already accepted;
 exit when finished so saved host command can collect. Fixture tests prove workflow
 only; actual handheld logs and owner report still required.
 
+Optional counter capability inventory accepts explicitly reviewed native artifact:
+
+```sh
+python3 scripts/host/r36s.py inventory --gpu-counter-probe .port-cache/gpu-counter-builds/<UTC-id>/artifacts/api-example
+```
+
+Host checks ELF64/AArch64, packages executable0755 and exact SHA256 manifest.
+Saved helper reads existing Mali node/driver/kernel-config capabilities, verifies
+artifact then bounds unchanged upstream example to10 seconds. Only run-owned
+output changes; no device-node permissions, driver or sysfs writes. Retains full
+supported-counter list, stdout/stderr/native exit and strict `capability.json`.
+Inventory success does not imply probe success: usable counter access requires
+all10 complete samples plus product/core/bus metadata. Idle access does not prove
+GPU headroom or explain active rendering. Failed/partial samples stay explicit.
+
 ## Unattended performance routes
+
+For controlled power-policy diagnostics, append
+`--performance-governors cpu,gpu,dmc` to seeded scene command. Individual domains
+(`cpu`, `gpu`, `dmc` or comma-separated subset) support causal comparisons. This
+option requires isolated seeded game scene; ordinary player state is untouched.
+Only advertised `performance` governors are selected, after every selected domain
+passes current-cap/available-frequency checks against observed R36S maxima
+1512MHz CPU,520MHz GPU,786MHz DMC. No numeric limit, OPP, voltage, permissions,
+thermal control or persistent firmware setting changes. Governors affect device
+while diagnostic runs; this is opt-in measurement, not default player preset.
+
+Port-owned locked journal records run/boot identity, exact prior governors and
+unchanged limits before each write. Readback failure rolls back partial changes;
+unsupported domain fails before all writes/game start. Session exit and independent
+privileged service recovery restore owned policies before frontend restart.
+`service/power-applied.json`, `power-restore.json` and optional `power-error.json`
+preserve status separately from game exit. Foreign journal, reboot, changed limit
+or external governor writer produces explicit conflict and preserves that state
+for review; it never repeatedly forces policy. Power loss can interrupt restoration,
+so stale recovery is rejected after reboot. Five-second monitor records actual
+frequencies/governors throughout; governor name alone does not prove full clocks.
+
+```sh
+python3 scripts/host/r36s.py game --scene performance-route-640 --seed-session <immutable-collected-session> --performance-governors cpu,gpu,dmc --reviewed-helpers r36s-dumps/sh3/<reviewed-inventory>
+```
+
+Compare matched same-binary default/selected-policy runs, including restoration,
+caps, temperatures, source hashes, actual room/movement/live health and frontend.
+Never invoke installed `perfmax`/`perfnorm` as substitutes: collected dArkOS helpers
+also change unrelated state and reset guessed defaults. Installed Ports command
+wraps asynchronous menu with those helpers; early reset is plausible until measured.
+
+`performance-swap1-640` and `performance-swap0-640` preserve same180-second
+movement/combat route, true640 resolution and30FPS limiter while explicitly
+requesting SDL swap interval1 or0. Diagnostic requires profiling; native runtime
+rejects other values and records requested/set-result/effective interval. Interval0
+is attribution experiment, not visual-smoothness acceptance or shipped default.
+`traverse-route-640` matches generic160-second `traverse-route-320` for public-save
+levels without assuming inventory layout. Verify actual live positions/rooms and
+weapon state from collected evidence; scheduled keys alone do not establish action.
 
 `performance-route-320` replays isolated room210 checkpoint for180 seconds with
 walking, strafing, weapon ready and repeated fire; captures disabled, frame and
@@ -431,7 +565,7 @@ paces worker completion without spinning. Ordinary launches retain current defau
 Run with handheld untouched:
 
 ```sh
-python3 scripts/host/r36s.py game --scene performance-route-320 --seed-session r36s-dumps/sh3/<inventory>/device/previous-launches/<run>/session --reviewed-helpers r36s-dumps/sh3/<reviewed-inventory>
+python3 scripts/host/r36s.py game --scene performance-route-320 --seed-session r36s-dumps/sh3/<completed-game-run>/launcher/session --reviewed-helpers r36s-dumps/sh3/<reviewed-inventory>
 ```
 
 Inventory/equip sequence assumes original nightmare checkpoint's available handgun.
@@ -542,7 +676,7 @@ Use reviewed inventory and current native package. First use can copy an explici
 collected session into absent `/roms2/ports/sh3/state/`:
 
 ```sh
-python3 scripts/host/r36s.py game --persistent-state --import-session r36s-dumps/sh3/<inventory>/device/previous-launches/<run>/session --reviewed-helpers r36s-dumps/sh3/<inventory>
+python3 scripts/host/r36s.py game --persistent-state --import-session r36s-dumps/sh3/<completed-game-run>/launcher/session --reviewed-helpers r36s-dumps/sh3/<inventory>
 ```
 
 Copies all three-digit savedata slots, data.sys, disp.ini, key.ini, sh3.ini and
@@ -571,3 +705,125 @@ after exit; inspect key.ini, new boot ID, saved-state hashes and frontend return
 Launcher snapshots preserve
 each run separately. Docker failure injection proves native failure path only;
 actual device round trip remains required.
+
+## Evidence transfer for performance diagnostics
+
+Saved device entry snapshots completed run, launcher and service directories into
+separate sibling `.evidence.tar.gz` files after restoration checks. Originals stay
+on device. Archive excludes only redundant `payload/runtime/sh3`; selected retained
+package, device runtime SHA and build/ABI metadata establish native identity. Tar
+records links without following them. Host validates all archive member paths and
+types before extraction, copies regular files/directories into fresh evidence
+directories, skips every symbolic/hard link and records link targets/modes in
+`*-archive-manifest.json`. Raw archives remain beside extracted evidence.
+
+For older runs that timed out during directory transfer, recover original device
+metadata into fresh collection-only evidence without deployment or execution:
+
+```sh
+python3 scripts/host/r36s.py inventory --retry-collection <original-UTC-run-id>
+```
+
+Inventory preserves current persistent state and existing top-level port logs.
+Completed launch history is referenced in `device/previous-launches.sha256` with
+exact original paths and hashes, without copying every prior snapshot into each
+new run. Original device directories and previously collected host evidence stay
+intact. New scene/import commands use explicit collected `launcher/session` state.
+
+Every saved host invocation captures block/inode capacity through saved
+`capacity.sh` before creating a device run directory. Probe source is streamed
+through the authenticated saved workflow so a full card still produces host logs.
+For an explicit reviewed list of unused per-run native payload copies:
+
+```sh
+python3 scripts/host/r36s.py inventory --reclaim-payloads <reviewed-retention-plan.json>
+```
+
+Plan must name only exact `runs/<UTC-id>/payload/runtime/sh3` files, SHA256/size and
+matching retained immutable `.port-cache/builds/<build>/artifacts/runtime/sh3`.
+CLI verifies every local copy before access; saved device helper checks inactive
+runtime, exact namespace, regular single-link files, no symlink traversal and
+all current hashes/identities before any unlink. Installed runtime, run folders,
+logs, manifests, saves, game data and source are excluded. Host retains reviewed
+plan, flushed validation/removal journal and capacity before/after. This recovery
+mode does not run inventory/game or clear other project/build/device history.
+
+Retry retains original run/status and uses bounded 300s legacy directory collection;
+execution and transfer statuses remain separate. Do not use legacy retry for
+sidecar payload trees containing links; new runs use archive collection.
+
+For explicit isolated profiled game runs, `--gpu-counter-probe <reviewed-AArch64-probe>`
+starts owned three-sample sidecar at100/125/150s from wrapper anchor. Service
+`launcher-clock.json` brackets whole launcher with MONOTONIC/RAW clocks; each
+sample records boundary clocks/frequencies, raw output and capability status.
+Cleanup stops only owned reader groups before governor/frontend restoration.
+Captured handheld SDL2 uses `gettimeofday` for ticks/performance counter, with
+1MHz performance frequency; existing MONOTONIC/RAW launcher bounds cannot bridge
+that realtime epoch. Hardware-counter rates use actual driver intervals independently.
+Do not align older counter bursts or audio lines with completion rows through a
+RAW-clock assumption. New buffered-trace candidate records paired REALTIME,
+MONOTONIC, RAW, SDL ticks and performance-counter anchors at startup and exit.
+Captured KMS provider also forces every swap-interval request to1; successful
+request0/setter0/getter1 does not establish disabled VSync. No system library changed.
+
+Counter sidecar uses explicit original payload directory through saved
+`gpu-counter-session.py --payload` and `gpu-counter-probe.sh RUN_DIR [PAYLOAD_DIR]`
+arguments. No storage symlink or duplicated native package needed; this supports
+configured device storage which rejects symlink creation. Reader manifest/hash
+verification remains mandatory for every sample.
+
+Matched120s `performance-traceoff-640`, `performance-trace-640` and
+`performance-drain-640` plans retain same movement/combat, warm75–120s window,
+30FPS limiter and swap request1. Trace/drain default off. `gl_trace: true` requires
+`profile: true`; `gl_drain: true` additionally requires trace. Launcher forwards
+only explicit `SH3_GL_TRACE=1` / `SH3_GL_DRAIN=1`. Native trace buffers events until
+worker shutdown; preSwap `glFinish` intentionally perturbs pipeline for attribution.
+Use separate immutable native candidate and compare trace-off observer control;
+drain is diagnostic, not accepted product optimization.
+
+`performance-coarseoff-640`, `performance-coarse-640` and
+`performance-coarse-drain-640` retain the same
+120s route and controls. Explicit `gl_trace_coarse: true` requires trace and frame
+profiling; launcher forwards `SH3_GL_TRACE_COARSE=1` only for that plan and clears
+inherited enables otherwise. Coarse mode omits asynchronous per-command clock
+reads while retaining chunks, synchronization/readback, queue waits, idle/pacing
+and optional preSwap drain events. Compare its observer cost against a trace-off
+run of the same immutable package and seed before interpreting event timings.
+The earlier full trace added about18.6ms worker CPU per frame on actual hardware;
+those perturbed timings do not describe ordinary rendering performance.
+All three coarse comparison plans also retain aligned Blood-option PEEK alongside
+Noise, Display, renderer-noise, room and health observations. Use identical
+verified minimum-setting seed and original warmed caches across the trio.
+Actual becb matched controls retain a material coarse-observer difference:
+25.42486FPS trace-off versus23.89162FPS coarse in75–120s, despite only0.204ms
+added worker CPU. Route, temperature and preflight variation limit exact cost
+attribution. Drain reduces Swap wall to0.300ms while `glFinish` takes28.660ms,
+but also produces33.077ms limiter sleep per completion: `swap_now` returns its
+post-drain Swap-start anchor to `pace_frame`. The resulting13.83967FPS is a
+diagnostic pipeline/pacer interaction, not ordinary GPU time or an optimization.
+Paired anchors and zero dropped GL events support queued-job attribution; nested
+command/chunk/frame costs and overlapping producer/worker lanes must not be added.
+Detailed run identities, cold/warm pairs and limits remain in
+`research_notes/Silent Hill 3 performance limits/measurement_plan.md`.
+
+`performance-profileoff-640` uses same120s route with frame/CPU profiler disabled,
+existing sixty-frame PEEK frame/time spans and ordinary default swap1. It omits
+profile-only swap override. Cadence is coarse; no per-frame percentiles or CPU
+attribution can be recovered from this control. Saved inventory also retains
+bounded exact AArch64 SDL provider bytes/identity for offline audit under ignored
+run artifacts, without installing or changing source library.
+
+`profile-cache-640` / `profile-cache-320` hold fixed save/camera and640x480 output
+for100s,30FPS limiter/swap1,55–95s warmed window. Cold means both port-local
+`sh3-progs.bin` and `sh3-gl-cache.bin` absent in isolated seed copy. Retain original
+save/settings; warm copy replaces only caches with corresponding completed cold
+session caches. Verify actual miss/write versus restore counters, native/seed/plan
+hashes, loaded options and full startup/loading/audio tails separately. Vendor
+driver cache, OS page cache and first-boot cold state are not globally purged or
+implied by this application-cache comparison.
+
+Inventory's `io-capability.txt` and stderr preserve caller UID, proc mount flags,
+self-io and noninteractive root self-io status plus selected installed kernel
+accounting flags. This distinguishes absent kernel accounting from read denial
+without changing permissions or installing tools. Repeated game `/proc/PID/io`
+ENOENT alone does not establish the exact kernel CONFIG value.

@@ -295,13 +295,8 @@ static int poll_input(void) {
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return IN_DOWN;
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return IN_LEFT;
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: return IN_RIGHT;
-#ifdef __SWITCH__  /* Nintendo's way round, as in the game (dinput.c): confirm on A (east), back on B (south) */
-            case SDL_CONTROLLER_BUTTON_B: return IN_OK;
-            case SDL_CONTROLLER_BUTTON_A: return IN_BACK;
-#else
             case SDL_CONTROLLER_BUTTON_A: return IN_OK;
             case SDL_CONTROLLER_BUTTON_B: return IN_BACK;
-#endif
             case SDL_CONTROLLER_BUTTON_START: return IN_OK;
             }
             break;
@@ -455,10 +450,10 @@ static void splash(const uint8_t *img, const uint8_t *end, Uint64 wait_ms, const
 void rt_game_setup(void);  /* rt_core.c */
 
 void launcher_run(void) {
-#ifndef __SWITCH__
-    /* Scripted runs (SH3_KEYS) go straight to the game; SH3_LAUNCHER=1 keeps the launcher for testing it. */
-    if (getenv("SH3_KEYS") && !getenv("SH3_LAUNCHER")) { rt_game_setup(); return; }
-#endif
+    /* Direct play needs no synthetic input. Keep optional launcher for diagnostics. */
+    const char *direct = getenv("SH3_DIRECT_PLAY");
+    if ((direct && !strcmp(direct, "1")) ||
+        (getenv("SH3_KEYS") && !getenv("SH3_LAUNCHER"))) { rt_game_setup(); return; }
     rt_window_open();
     gl_context_open();
     int fh;

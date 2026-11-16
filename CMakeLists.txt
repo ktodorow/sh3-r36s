@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(sh3nx C)
+project(sh3_r36s C)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
@@ -24,14 +24,6 @@ set_source_files_properties(src/d3d8/launcher.c PROPERTIES COMPILE_DEFINITIONS
                             "SRC_DIR=\"${CMAKE_SOURCE_DIR}\";SPLASH_SHA1=\"${SPLASH_SHA1}\""
                             OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/splash.bmp;${CMAKE_SOURCE_DIR}/assets/logo.bmp;${CMAKE_SOURCE_DIR}/assets/font.bmp")
 
-if(NINTENDO_SWITCH)
-  # Built with the devkitPro toolchain (tools/build-switch.sh); OpenGL comes through EGL and mesa.
-  target_include_directories(sh3 PRIVATE ${DEVKITPRO}/portlibs/switch/include)
-  target_link_libraries(sh3 PRIVATE SDL2 EGL glapi drm_nouveau stdc++ pthread m)
-  nx_generate_nacp(sh3.nacp NAME "Silent Hill 3" AUTHOR "sh3-nx" VERSION "0.06")
-  nx_create_nro(sh3 OUTPUT sh3-nx.nro NACP sh3.nacp NOICON)
-else()
-  # GL is loaded at run time through SDL (src/d3d8/gl.c), so nothing links libGL.
-  find_package(SDL2 REQUIRED)
-  target_link_libraries(sh3 PRIVATE SDL2::SDL2 m pthread)
-endif()
+# GL/GLES is loaded at run time through SDL (src/d3d8/gl.c).
+find_package(SDL2 REQUIRED)
+target_link_libraries(sh3 PRIVATE SDL2::SDL2 m pthread)

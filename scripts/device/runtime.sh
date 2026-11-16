@@ -72,6 +72,13 @@ if [ "$MODE" = game ]; then
     # Window-close probe; watchdog remains failure if game does not handle WM_QUIT.
     export SH3_SESSION_ISOLATED=1
     unset SH3_IMPORT_SESSION SH3_SEED_SESSION
+    unset SH3_PERFORMANCE_GOVERNORS SH3_SYSFS_ROOT SH3_GPU_COUNTER_PAYLOAD
+    if [ -f "$PAYLOAD/performance-governors" ]; then
+        export SH3_PERFORMANCE_GOVERNORS="$(cat "$PAYLOAD/performance-governors")"
+    fi
+    if [ -f "$PAYLOAD/gpu-counter/api-example" ]; then
+        export SH3_GPU_COUNTER_PAYLOAD="$PAYLOAD"
+    fi
     export SH3_KEYS='2:Return+0.4,5:Return+0.4,10:Return+0.4,15:Return+0.4,20:Return+0.4,25:Return+0.4,30:Return+0.4,35:Return+0.4,40:Return+0.4,45:Return+0.4,50:Return+0.4,55:Return+0.4,75:Escape+0.4,85:S+3,90:E+2'
     export SH3_INTERNAL_RESOLUTION=640x480
     export SH3_PEEK='72BFD0,72BFD4,72D2C0,8984E0,8984E8,898660,72C7F0,72C7F4,BCC630'
@@ -123,7 +130,7 @@ if [ "$MODE" = game ]; then
     fi
     export SH3_STATS=1 SH3_GL_BACKEND=gles SH3_SHOW=1 SH3_QUIT_AFTER=100 SH3_MONITOR=1
     export SH3_SHOT_EVERY=60
-    unset SH3_PROFILE SH3_FPS_LIMIT
+    unset SH3_PROFILE SH3_FPS_LIMIT SH3_SWAP_INTERVAL SH3_GL_TRACE SH3_GL_DRAIN SH3_GL_TRACE_COARSE
     if [ -f "$PAYLOAD/scene-plan.json" ]; then
         cp "$PAYLOAD/scene-plan.json" "$RUN_DIR/scene-plan.json"
         python3 - "$RUN_DIR/scene-plan.json" > "$RUN_DIR/scene-values.txt" <<'PY'
@@ -139,12 +146,43 @@ limit = plan.get("fps_limit", 0)
 if type(limit) is not int or limit not in (0, 30):
     raise ValueError("Invalid frame limit")
 print(limit)
+gpu_profile = plan.get("gpu_profile", False)
+if type(gpu_profile) is not bool:
+    raise ValueError("Invalid GPU profile")
+print(int(gpu_profile))
+swap_interval = plan.get('swap_interval')
+if swap_interval is not None and (type(swap_interval) is not int or swap_interval not in (0, 1)):
+    raise ValueError('Invalid swap interval')
+print('' if swap_interval is None else swap_interval)
+gl_trace = plan.get('gl_trace', False)
+if type(gl_trace) is not bool:
+    raise ValueError('Invalid GL trace')
+if gl_trace and plan.get('profile') is not True:
+    raise ValueError('GL trace requires frame profile')
+print(int(gl_trace))
+gl_drain = plan.get('gl_drain', False)
+if type(gl_drain) is not bool:
+    raise ValueError('Invalid GL drain')
+if gl_drain and not gl_trace:
+    raise ValueError('GL drain requires GL trace')
+print(int(gl_drain))
+gl_trace_coarse = plan.get('gl_trace_coarse', False)
+if type(gl_trace_coarse) is not bool:
+    raise ValueError('Invalid coarse GL trace')
+if gl_trace_coarse and not gl_trace:
+    raise ValueError('Coarse GL trace requires GL trace')
+print(int(gl_trace_coarse))
 PY
         mapfile -t scene_values < "$RUN_DIR/scene-values.txt"
         export SH3_KEYS="${scene_values[0]}" SH3_QUIT_AFTER="${scene_values[1]}"
         export SH3_SHOT_EVERY="${scene_values[2]}" SH3_PEEK="${scene_values[3]}"
         export SH3_INTERNAL_RESOLUTION="${scene_values[4]}"
         export SH3_FPS_LIMIT="${scene_values[6]}"
+        export SH3_GPU_PROFILE="${scene_values[7]}"
+        if [ -n "${scene_values[8]}" ]; then export SH3_SWAP_INTERVAL="${scene_values[8]}"; fi
+        if [ "${scene_values[9]}" = 1 ]; then export SH3_GL_TRACE=1; fi
+        if [ "${scene_values[10]}" = 1 ]; then export SH3_GL_DRAIN=1; fi
+        if [ "${scene_values[11]}" = 1 ]; then export SH3_GL_TRACE_COARSE=1; fi
         if [ "${scene_values[5]}" = 1 ]; then
             export SH3_PROFILE="$PORT_ROOT/runs/${RUN_ID}-launch/frame-times.csv"
         fi

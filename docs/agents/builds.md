@@ -102,3 +102,14 @@ at link. Explicit empty LTO flag clears cached CMake settings when disabled.
 Production-script ARM64 fixture checks real LTO object sections, runnable
 signed-wrap example and successful ON→OFF rebuild; it does not prove game speed.
 Follow [GCC12 LTO requirements](https://gcc.gnu.org/onlinedocs/gcc-12.2.0/gcc/Optimize-Options.html#index-flto).
+
+## Public player packages
+
+Use `python3 scripts/host/build.py --release`. This disables embedding private
+game-derived diagnostic samples, validates original input using
+`scripts/build/check-data.sh`, and creates `dist/release/sh3-r36s-30fps.zip` plus
+`SHA256SUMS` after successful native build. Package uses explicit file allowlist;
+never archive local installation, generated headers, saves, shader caches or
+private build evidence. Runtime input marker binds launcher validation to
+selected executable profile. Research builds without `--release` retain private
+samples for existing hardware diagnostics; never publish those binaries.

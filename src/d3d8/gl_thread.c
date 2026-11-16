@@ -13,6 +13,9 @@ GL_FUNCS(DRIVER)
 #undef DRIVER
 
 typedef void (*Run)(const void *);
+typedef struct Sync { void (*run)(void *); void *data; const char *api; } Sync;
+static void run_sync(const void *data);
+static void run_swap(const void *data);
 typedef struct Command { Run run; size_t bytes; } Command;
 typedef struct Chunk {
     unsigned char *data;
@@ -35,6 +38,8 @@ typedef struct SyncCost { const char *api; uint64_t calls, ticks; } SyncCost;
 GL_FUNCS(COST)
 #undef COST
 static int queue_stats;
+static int trace_enabled, trace_coarse, worker_frame;
+static void (*diagnostic_finish)(void);
 static GLint unpack_alignment, unpack_row_length, unpack_skip_rows, unpack_skip_pixels, unpack_buffer;
 
 SDL_GLContext gl_current_context(void) {
@@ -49,16 +54,31 @@ static int render_worker(void *unused) {
     SDL_CondBroadcast(condition);
     for (;;) {
         Chunk *chunk = &chunks[read_slot];
+        ProfileSpan idle = trace_enabled ? profile_trace_begin() : (ProfileSpan){0};
         while (chunk->state != READY && !stopping) SDL_CondWait(condition, mutex);
+        profile_trace_end(idle, 1, worker_frame, "idle", "ready_chunk", 0, completed_jobs, 0);
         if (chunk->state != READY) break;
         chunk->state = RUNNING;
         SDL_UnlockMutex(mutex);
+        ProfileSpan batch = trace_enabled ? profile_trace_begin() : (ProfileSpan){0};
         profile_gpu_begin();
         for (size_t offset = 0; offset < chunk->used;) {
             const Command *command = (const Command *)(chunk->data + offset);
-            command->run(command + 1);
+            if (command->run == run_swap) {
+                profile_trace_end(batch, 1, worker_frame, "chunk", "dispatch", 0, chunk->serial, 1);
+                batch.counter = 0;
+                command->run(command + 1);
+            } else if (trace_enabled && (!trace_coarse || command->run == run_sync)) {
+                ProfileSpan call = profile_trace_begin();
+                command->run(command + 1);
+                const Sync *sync = command->run == run_sync ? (const Sync *)(command + 1) : NULL;
+                profile_trace_end(call, 1, worker_frame, "command", sync ? sync->api : "async",
+                                  (uintptr_t)(sync ? (Run)sync->run : command->run), chunk->serial,
+                                  sync && !strcmp(sync->api,"glReadPixels"));
+            } else command->run(command + 1);
             offset += command->bytes;
         }
+        profile_trace_end(batch, 1, worker_frame, "chunk", "dispatch", 0, chunk->serial, 1);
         SDL_LockMutex(mutex);
         completed_jobs = chunk->serial;
         chunk->state = FREE;
@@ -95,11 +115,13 @@ static void *record(Run run, size_t size) {
     size_t bytes = (sizeof(Command) + size + 15) & ~(size_t)15;
     if (building && bytes > building->capacity - building->used) publish();
     if (!building) {
+        ProfileSpan wait = trace_enabled ? profile_trace_begin() : (ProfileSpan){0};
         SDL_LockMutex(mutex);
         building = &chunks[write_slot];
         while (building->state != FREE) SDL_CondWait(condition, mutex);
         building->state = BUILDING;
         SDL_UnlockMutex(mutex);
+        profile_trace_end(wait, 0, rt_frame + 1, "backpressure", "free_chunk", 0, submitted_jobs, 0);
         building->used = 0;
         if (building->capacity < bytes) {
             size_t capacity = bytes > 8u*1024*1024 ? bytes : 8u*1024*1024;
@@ -114,15 +136,17 @@ static void *record(Run run, size_t size) {
     return command + 1;
 }
 
-typedef struct Sync { void (*run)(void *); void *data; } Sync;
 static void run_sync(const void *data) {
     const Sync *call = data;
     call->run(call->data);
 }
 static void synchronize(void (*run)(void *), void *data, SyncCost *cost) {
     uint64_t start = queue_stats ? SDL_GetPerformanceCounter() : 0;
-    *(Sync *)record(run_sync, sizeof(Sync)) = (Sync){run, data};
-    wait_job(publish());
+    ProfileSpan wait = trace_enabled ? profile_trace_begin() : (ProfileSpan){0};
+    *(Sync *)record(run_sync, sizeof(Sync)) = (Sync){run, data, cost->api};
+    uint64_t serial = publish();
+    wait_job(serial);
+    profile_trace_end(wait, 0, rt_frame + 1, "sync", cost->api, (uintptr_t)run, serial, 0);
     if (queue_stats) { cost->calls++; cost->ticks += SDL_GetPerformanceCounter() - start; }
 }
 
@@ -410,14 +434,23 @@ static void pace_frame(uint64_t start) {
     uint64_t now = SDL_GetPerformanceCounter();
     if (now < frame_deadline) {
         uint64_t ms = ((frame_deadline - now) * 1000 + frame_frequency - 1) / frame_frequency;
+        ProfileSpan sleep = trace_enabled ? profile_trace_begin() : (ProfileSpan){0};
         SDL_Delay((Uint32)ms);
+        profile_trace_end(sleep, 1, worker_frame, "pacer", "SDL_Delay", 0, 0, 1);
     }
 }
 static uint64_t swap_now(const Swap *swap) {
     profile_gpu_end(swap->profile);
+    if (diagnostic_finish) {
+        ProfileSpan drain = profile_trace_begin();
+        diagnostic_finish();
+        profile_trace_end(drain, 1, swap->profile.frame, "drain", "glFinish",
+                          (uintptr_t)diagnostic_finish, 0, 1);
+    }
+    double cpu_start = swap->profile.enabled ? profile_thread_ms() : 0;
     uint64_t start = SDL_GetPerformanceCounter();
     SDL_GL_SwapWindow(swap->window);
-    profile_swap_end(swap->profile, swap->profile.enabled ? start : 0);
+    profile_swap_end(swap->profile, swap->profile.enabled ? start : 0, cpu_start);
     return start;
 }
 static void run_swap(const void *data) {
@@ -429,6 +462,7 @@ static void run_swap(const void *data) {
     SDL_CondBroadcast(condition);
     SDL_UnlockMutex(mutex);
     pace_frame(start);
+    worker_frame = ((const Swap *)data)->profile.frame + 1;
 }
 void gl_swap_window(SDL_Window *window) {
     Swap swap = {window, profile_swap_snapshot()};
@@ -436,15 +470,28 @@ void gl_swap_window(SDL_Window *window) {
     *(Swap *)record(run_swap,sizeof swap) = swap;
     submitted_frames++;
     publish();
+    ProfileSpan wait = trace_enabled ? profile_trace_begin() : (ProfileSpan){0};
     SDL_LockMutex(mutex);
     while (completed_frames + 1 < submitted_frames) SDL_CondWait(condition,mutex);
     SDL_UnlockMutex(mutex);
+    profile_trace_end(wait, 0, swap.profile.frame, "backpressure", "completed_swap", 0, submitted_jobs, 0);
 }
 
 int gl_thread_start(void) {
     if (active) return 1;
     const char *enabled = getenv("SH3_GL_THREAD");
     if (enabled && !strcmp(enabled,"0")) return 0;
+    if (getenv("SH3_GL_TRACE")) {
+        trace_enabled = profile_trace_start();
+        trace_coarse = getenv("SH3_GL_TRACE_COARSE") != NULL;
+        rt_log("profile_gl_trace_mode=%s", trace_coarse ? "coarse" : "full");
+    }
+    if (getenv("SH3_GL_DRAIN")) {
+        diagnostic_finish = SDL_GL_GetProcAddress("glFinish");
+        if (!diagnostic_finish) rt_fatal("profiling GL drain unavailable: glFinish missing");
+        rt_log("profile_gl_drain=enabled phase=pre_swap");
+    }
+    worker_frame = rt_frame + 1;
     queue_stats = getenv("SH3_PROFILE") != NULL || getenv("SH3_GL_QUEUE_STATS") != NULL;
     context = SDL_GL_GetCurrentContext();
     p_glGetIntegerv(GL_UNPACK_ALIGNMENT,&unpack_alignment);

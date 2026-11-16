@@ -13,8 +13,8 @@ def seed_hashes(seed):
                          "savedata/key.ini", "sh3-progs.bin", "sh3-gl-cache.bin") if (seed / name).is_file()}
 
 
-def scene_identity(name, seed=None):
+def scene_identity(name, seed=None, runtime=None):
     return {"scene": name, "plan": SCENES[name],
             "plan_sha256": hashlib.sha256(json.dumps(SCENES[name], sort_keys=True).encode()).hexdigest(),
-            "runtime_sha256": hashlib.sha256((ROOT / "dist/runtime/sh3").read_bytes()).hexdigest(),
+            "runtime_sha256": hashlib.sha256((runtime or ROOT / "dist/runtime/sh3").read_bytes()).hexdigest(),
             "seed_sha256": seed_hashes(seed) if seed else {}}
