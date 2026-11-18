@@ -1,41 +1,18 @@
 #!/bin/bash
-# Read-only supported-executable check; usable underneath public launcher.
+# Read-only game-file checks; executable identity is not a launch requirement.
 DATA_DIR=$1
 check_executable() {
     if [ ! -f "$DATA_DIR/sh3.exe" ]; then
-        echo 'Missing sh3.exe. Supply supported PC executable with data/ in gamedata/.' >&2
+        echo 'Missing sh3.exe. Supply your PC executable with data/ in gamedata/.' >&2
         return 2
     fi
-    size=$(wc -c < "$DATA_DIR/sh3.exe")
-    if [ "$size" -ne 3338240 ]; then
-        echo "Unsupported sh3.exe: expected 3338240 bytes; found $size. Original preserved." >&2
+    if [ ! -s "$DATA_DIR/sh3.exe" ]; then
+        echo 'Empty sh3.exe. Supply your PC executable with data/ in gamedata/.' >&2
         return 2
     fi
-    if command -v sha1sum >/dev/null; then
-        sha=$(sha1sum "$DATA_DIR/sh3.exe")
-    elif command -v shasum >/dev/null; then
-        sha=$(shasum -a 1 "$DATA_DIR/sh3.exe")
-    else
-        echo 'SHA-1 tool missing; executable cannot be verified.' >&2
-        return 3
-    fi
-    sha=${sha%% *}
-    case "$sha" in
-        aa2aca6dba19bf510c9c2e92eefdc15e98266581) profile=upstream-aa2aca6d ;;
-        d851669ef609b3164e3581aa8dcfbfaec866cb79) profile=owner-cd-d851669e ;;
-        *)
-            echo "Unsupported sh3.exe: expected SHA-1 aa2aca6dba19bf510c9c2e92eefdc15e98266581 (upstream) or d851669ef609b3164e3581aa8dcfbfaec866cb79 (owner CD); found $sha. Original preserved." >&2
-            return 2
-            ;;
-    esac
-    if [ -n "${2:-}" ] && [ "$sha" != "$2" ]; then
-        echo "Game executable does not match this runtime. Use matching release or rebuild from your own sh3.exe. Original preserved." >&2
-        return 2
-    fi
-    printf 'Input profile: %s; %s bytes; SHA-1 %s\n' "$profile" "$size" "$sha"
-    echo 'Native runtime must be generated from this input profile; gameplay compatibility untested.'
+    echo 'Game executable present.'
 }
-check_executable "$@"
+check_executable
 status=$?
 manifest="$(dirname "$0")/../required-data.txt"
 if [ ! -r "$manifest" ]; then
@@ -64,5 +41,5 @@ while IFS= read -r path; do
         fi
     fi
 done < "$manifest"
-[ "$status" -ne 0 ] || echo "Supported executable and required-data paths verified; gameplay remains untested."
+[ "$status" -ne 0 ] || echo "Game executable and required-data paths present; gameplay remains untested."
 exit "$status"

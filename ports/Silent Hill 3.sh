@@ -69,11 +69,7 @@ main() {
         timeout 30s "$PORT_ROOT/runtime/sh3" "--$SH3_MODE"
         return $?
     fi
-    local expected_input=''
-    if [ -f "$PORT_ROOT/runtime/input.sha1" ]; then
-        expected_input=$(cat "$PORT_ROOT/runtime/input.sha1")
-    fi
-    bash "${SH3_PACKAGE_DIR:-$PORT_ROOT/preflight}/scripts/build/check-data.sh" "$DATA_DIR" "$expected_input" \
+    bash "${SH3_PACKAGE_DIR:-$PORT_ROOT/preflight}/scripts/build/check-data.sh" "$DATA_DIR" \
         2> "$RUN_DIR/data.stderr.txt"
     local status=$?
     cat "$RUN_DIR/data.stderr.txt" >&2

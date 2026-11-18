@@ -40,6 +40,19 @@ class LauncherFixture(unittest.TestCase):
 
 
 class PreflightLauncherTests(LauncherFixture):
+    def prepare_game(self, executable):
+        (self.data / "sh3.exe").write_bytes(executable)
+        for line in (REPO / "scripts/required-data.txt").read_text().splitlines():
+            if not line or line.startswith("#"):
+                continue
+            asset = self.data / line
+            asset.parent.mkdir(parents=True, exist_ok=True)
+            asset.write_bytes(b"fixture asset")
+        runtime = self.port / "runtime/sh3"
+        runtime.parent.mkdir(exist_ok=True)
+        runtime.write_text('#!/bin/sh\necho "runtime started"\nexit 7\n')
+        runtime.chmod(0o755)
+
     @unittest.skipUnless((OWNER / "data").is_dir(), "requires owner game data")
     def test_first_launch_imports_all_prior_slots_and_preferences_without_changing_source(self):
         (self.data / "sh3.exe").symlink_to(OWNER / "sh3.exe")
@@ -286,22 +299,32 @@ class PreflightLauncherTests(LauncherFixture):
         self.assertIn("frontend ready", result.stdout)
         self.assertTrue(unrelated.is_file())
 
-    def test_wrong_executable_size_is_reported_without_changing_original(self):
+    def test_launcher_accepts_different_executable_size_without_changing_original(self):
         exe = self.data / "sh3.exe"
-        exe.write_bytes(b"owner supplied wrong build")
-        result = self.launch()
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("expected 3338240 bytes", result.stdout + result.stderr)
-        self.assertEqual(exe.read_bytes(), b"owner supplied wrong build")
+        original = b"another PC executable"
+        self.prepare_game(original)
+        result = self.launch(SH3_MODE="game")
+        self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
+        self.assertIn("runtime started", result.stdout)
+        self.assertIn("frontend ready", result.stdout)
+        self.assertEqual(exe.read_bytes(), original)
 
-    def test_same_size_wrong_executable_cannot_pass_on_size_alone(self):
+    def test_launcher_accepts_unknown_executable_without_running_hash_tools(self):
         exe = self.data / "sh3.exe"
-        exe.write_bytes(bytes(3338240))
-        result = self.launch()
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("expected SHA-1 aa2aca6dba19bf510c9c2e92eefdc15e98266581",
-                      result.stdout + result.stderr)
-        self.assertEqual(exe.stat().st_size, 3338240)
+        original = bytes(3338240)
+        self.prepare_game(original)
+        commands = self.root / "bin"
+        commands.mkdir()
+        requested_hash = self.root / "hash-requested"
+        for name in ("sha1sum", "shasum"):
+            command = commands / name
+            command.write_text(f'#!/bin/sh\ntouch "{requested_hash}"\nexit 99\n')
+            command.chmod(0o755)
+        result = self.launch(SH3_MODE="game", PATH=f"{commands}:{os.environ['PATH']}")
+        self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
+        self.assertIn("runtime started", result.stdout)
+        self.assertFalse(requested_hash.exists())
+        self.assertEqual(exe.read_bytes(), original)
 
     @unittest.skipUnless((OWNER / "sh3.exe").is_file(), "requires owner CD executable")
     def test_owner_cd_executable_is_recognized_before_missing_assets_are_reported(self):
@@ -311,22 +334,35 @@ class PreflightLauncherTests(LauncherFixture):
         shutil.copyfile(original, self.data / "sh3.exe")
         result = self.launch()
         self.assertEqual(result.returncode, 2)
-        self.assertIn("Input profile: owner-cd-d851669e", result.stdout)
+        self.assertIn("Game executable present.", result.stdout)
         self.assertNotIn("Unsupported sh3.exe", result.stderr)
         self.assertIn("Missing or empty required data: data/movie/op.000", result.stderr)
         self.assertEqual(original.read_bytes(), before)
 
-    @unittest.skipUnless((OWNER / "sh3.exe").is_file(), "requires owner CD executable")
-    def test_installed_runtime_rejects_another_recognized_input_profile(self):
-        (self.data / "sh3.exe").symlink_to(OWNER / "sh3.exe")
+    def test_installed_runtime_ignores_old_input_hash_marker(self):
+        self.prepare_game(b"another PC executable")
         runtime = self.port / "runtime"
-        runtime.mkdir()
         (runtime / "input.sha1").write_text("aa2aca6dba19bf510c9c2e92eefdc15e98266581\n")
         result = self.launch(SH3_MODE="game")
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("does not match this runtime", result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
+        self.assertIn("runtime started", result.stdout)
         self.assertIn("frontend ready", result.stdout)
         self.assertEqual(self.save.read_bytes(), b"owner save remains unchanged")
+
+    def test_empty_executable_is_rejected_before_starting_runtime(self):
+        self.prepare_game(b"")
+        result = self.launch(SH3_MODE="game")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("Empty sh3.exe", result.stderr)
+        self.assertNotIn("runtime started", result.stdout)
+
+    def test_missing_asset_is_rejected_with_an_unrestricted_executable(self):
+        self.prepare_game(b"another PC executable")
+        (self.data / "data/arc.arc").unlink()
+        result = self.launch(SH3_MODE="game")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("Missing or empty required data: data/arc.arc", result.stderr)
+        self.assertNotIn("runtime started", result.stdout)
 
     def test_missing_original_movie_is_reported_even_with_invalid_executable(self):
         (self.data / "sh3.exe").write_bytes(b"wrong build")

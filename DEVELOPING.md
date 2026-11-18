@@ -21,15 +21,16 @@ Set `SH3_GAME_DIR='/absolute/path/to/your/PC installation'` in ignored `.env`.
 The folder must contain `sh3.exe` and complete `data/`. Do not commit game files,
 recompiled generated C, `.env`, build outputs, caches or device dumps.
 
-Supported input executables are 3,338,240 bytes:
+Verified build input executables are 3,338,240 bytes:
 
 | Profile | SHA-1 |
 | --- | --- |
 | Original-CD input used for public R36S build | `d851669ef609b3164e3581aa8dcfbfaec866cb79` |
 | Original upstream input | `aa2aca6dba19bf510c9c2e92eefdc15e98266581` |
 
-Generated code and binary must match selected input. Neither arbitrary patched
-executables nor mixing generated output between profiles is supported.
+Launcher accepts any nonempty `sh3.exe`, with no hash or fixed-size check.
+Building from another executable still requires compatible code and patch
+addresses; generated code and binary must match the selected input.
 
 ## Build with Docker
 
